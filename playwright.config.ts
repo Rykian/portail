@@ -16,6 +16,10 @@ export default defineConfig({
       testMatch: "admin.spec.ts",
       use: { extraHTTPHeaders: { "x-dev-user-groups": "family,authentik Admins", "x-portal-origin": "lan" } },
     },
+    {
+      name: "login-error",
+      testMatch: "auth-error.spec.ts",
+    },
   ],
   webServer: {
     command: `npx next dev -p ${port}`,

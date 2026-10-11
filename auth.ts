@@ -7,7 +7,7 @@ export const END_SESSION_URL = "https://auth.payoux.net/application/o/portail/en
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [Authentik({ authorization: { params: { scope: "openid email profile avatar" } } })],
-  pages: { signIn: "/login" },
+  pages: { signIn: "/login", error: "/auth-error" },
   callbacks: {
     jwt({ token, profile }) {
       if (profile) token.groups = groupsFromProfile(profile);

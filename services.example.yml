@@ -1,4 +1,4 @@
-sections:            # display order
+sections: # display order
   - Maison
   - Médias
   - Outils
@@ -8,11 +8,11 @@ sections:            # display order
 services:
   - name: Home Assistant
     url: https://ha.payoux.net
-    icon: home-assistant             # data/icons/home-assistant.png
+    icon: home-assistant # data/icons/home-assistant.png
     section: Maison
-    description: La maison connectée : lumières, chauffage, alarmes et scénarios.
-    groups: [family]                 # who sees it
-    reach: everywhere                # everywhere | lan
+    description: "La maison connectée : lumières, chauffage, alarmes et scénarios."
+    groups: [family] # who sees it
+    reach: everywhere # everywhere | lan
 
   - name: Proxmox
     url: https://proxmox.payoux.net

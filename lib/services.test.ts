@@ -1,4 +1,4 @@
-import { mkdtemp, rm, unlink, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,10 @@ describe("parseConfig", () => {
     const config = parseConfig(valid);
     expect(config.sections).toEqual(["Maison", "Infrastructure"]);
     expect(config.services[0]).toMatchObject({ name: "Home Assistant", reach: "everywhere" });
+  });
+
+  it("accepts services.example.yml", async () => {
+    expect(parseConfig(await readFile("services.example.yml", "utf8")).services).toHaveLength(2);
   });
 
   it.each([

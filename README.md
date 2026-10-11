@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Portail
 
-## Getting Started
+Page d'accueil de `https://payoux.net` : liste des services de la maison, filtrée par groupe Authentik.
 
-First, run the development server:
+Design: `docs/superpowers/specs/2026-10-11-portail-design.md`.
+
+## Développement
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+mkdir -p data/icons && cp services.example.yml data/services.yml
+npm run dev            # fake user from .env.development, no Authentik needed
+npm run lint           # oxlint
+npm run format         # oxfmt
+npm test               # Vitest
+npm run e2e            # Playwright
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`DEV_USER_GROUPS` (`.env.development`) sets the fake user's groups; `DEV_ORIGIN=internet` simulates a visit from outside.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Déploiement (CT 100)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+`/root/portal/` contains `compose.yml` (from `deploy/compose.yml`), `.env` (the `AUTH_*` variables) and `data/` (`services.yml` + `icons/`).
 
-## Learn More
+```bash
+docker compose pull && docker compose up -d        # update
+docker compose run --rm -v ./data/icons:/data/icons portal node scripts/fetch-icons.mjs   # new icons
+```
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Edits to `data/services.yml` are picked up on the next page load. Admins must also be in the `family` group to see family entries.

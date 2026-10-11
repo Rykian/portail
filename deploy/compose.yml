@@ -1,0 +1,18 @@
+# Copy to /root/portal/compose.yml on CT 100, next to .env and data/.
+services:
+  portal:
+    image: ghcr.io/rykian/portail:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SERVICES_FILE: /data/services.yml
+      ICONS_DIR: /data/icons
+    volumes:
+      # A directory, not a single-file mount: editors that replace the file
+      # would leave a file mount pointing at the old content.
+      - ./data:/data:ro
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true

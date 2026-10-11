@@ -1,0 +1,37 @@
+sections: [Maison, Médias, Infrastructure]
+services:
+  - name: Home Assistant
+    url: https://ha.example.test
+    icon: home-assistant
+    section: Maison
+    description: La maison connectée.
+    groups: [family]
+    reach: everywhere
+  - name: Donetick
+    url: https://tasks.example.test
+    icon: donetick
+    section: Maison
+    description: Les tâches ménagères.
+    groups: [family]
+    reach: lan
+  - name: Frigate
+    url: https://frigate.example.test
+    icon: frigate
+    section: Maison
+    description: La caméra de la sonnette.
+    groups: [authentik Admins]
+    reach: everywhere
+  - name: Plex
+    url: https://plex.example.test
+    icon: plex
+    section: Médias
+    description: Nos films et séries.
+    groups: [family]
+    reach: everywhere
+  - name: Proxmox
+    url: https://proxmox.example.test
+    icon: proxmox
+    section: Infrastructure
+    description: Le serveur.
+    groups: [authentik Admins]
+    reach: lan

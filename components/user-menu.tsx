@@ -1,0 +1,46 @@
+"use client";
+
+import { logout } from "@/app/actions";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { initials, type PortalUser } from "@/lib/user";
+
+export function UserMenu({ user, admin }: { user: PortalUser; admin: boolean }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger aria-label="Menu du compte" className="rounded-full">
+        <Avatar>
+          {user.image && <AvatarImage src={user.image} alt="" />}
+          <AvatarFallback>{initials(user.name)}</AvatarFallback>
+        </Avatar>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>
+            <span className="block">{user.name}</span>
+            <span className="block text-xs font-normal text-muted-foreground">{user.email}</span>
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        {/* oxlint-disable-next-line jsx-a11y/control-has-associated-label -- Base UI renders the item text inside the <a> */}
+        <DropdownMenuItem render={<a href="https://auth.payoux.net/if/user/#/settings" />}>Mon compte</DropdownMenuItem>
+        {admin && (
+          <>
+            {/* oxlint-disable-next-line jsx-a11y/control-has-associated-label -- Base UI renders the item text inside the <a> */}
+            <DropdownMenuItem render={<a href="https://auth.payoux.net/if/admin/" />}>Administration</DropdownMenuItem>
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => logout()}>Se déconnecter</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

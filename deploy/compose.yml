@@ -7,12 +7,15 @@ services:
     environment:
       SERVICES_FILE: /data/services.yml
       ICONS_DIR: /data/icons
+      UPDATER_URL: http://updater:8080
     volumes:
       # A directory, not a single-file mount: editors that replace the file
       # would leave a file mount pointing at the old content.
       - ./data:/data:ro
-    networks: [proxy]
+    networks: [proxy, updater]
 
 networks:
   proxy:
+    external: true
+  updater:
     external: true

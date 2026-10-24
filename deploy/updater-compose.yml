@@ -1,0 +1,15 @@
+# Copy to /root/updater/compose.yml on CT 100, next to .env (UPDATER_TOKEN), config.yml and data/.
+services:
+  updater:
+    image: ghcr.io/rykian/portail-updater:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root:/root # same path: compose resolves bind mounts on the client side
+      - ./data:/data
+    networks: [updater]
+
+networks:
+  updater:
+    name: updater # normal bridge: needs outbound internet for registries

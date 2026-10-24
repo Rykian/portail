@@ -1,0 +1,8 @@
+*
+!updater/package.json
+!updater/bun.lock
+!updater/tsconfig.json
+!updater/src
+!shared
+**/*.test.ts
+updater/src/test

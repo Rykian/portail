@@ -1,4 +1,4 @@
-// Fake updater for the Playwright e2e run: `node e2e/fake-updater.ts` (Node strips the types).
+// Fake updater for the Playwright e2e run: `node e2e/fake-updater.mts` (Node strips the types).
 // Plain node:http, no import from the repo. Extend `routes` for new endpoints.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -10,6 +10,8 @@ type Reply = { status: number; body: unknown };
 type Route = (request: IncomingMessage, url: URL, response: ServerResponse) => Reply | Promise<Reply> | null;
 
 let down = false;
+// Last `x-updater-user` seen on a POST, exposed at `GET /__last-user` for the e2e tests.
+let lastUser: string | null = null;
 
 function service(
   name: string,
@@ -132,6 +134,7 @@ const routes: Record<string, Route> = {
     status: 200,
     body: { stacks, lastCheck: CHECKED_AT, configError: null, runningJob: null },
   }),
+  "POST /checks": () => ({ status: 200, body: { jobId: 1 } }),
 };
 
 function send(response: ServerResponse, { status, body }: Reply) {
@@ -148,11 +151,13 @@ const server = createServer(async (request, response) => {
     down = true;
     return send(response, { status: 200, body: { down } });
   }
+  if (key === "GET /__last-user") return send(response, { status: 200, body: { user: lastUser } });
   if (down) return send(response, { status: 503, body: { error: "down" } });
   if (request.headers.authorization !== `Bearer ${TOKEN}`) {
     return send(response, { status: 401, body: { error: "unauthorized" } });
   }
 
+  if (request.method === "POST") lastUser = request.headers["x-updater-user"]?.toString() ?? null;
   const reply = await routes[key]?.(request, url, response);
   // A route that streams (SSE) answers on `response` itself and returns null.
   if (reply === null) return;

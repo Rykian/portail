@@ -23,7 +23,7 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "node e2e/fake-updater.ts",
+      command: "node e2e/fake-updater.mts",
       url: "http://localhost:3101/health",
       reuseExistingServer: !process.env.CI,
     },

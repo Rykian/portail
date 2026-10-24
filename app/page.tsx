@@ -12,10 +12,9 @@ export default async function Home() {
   if (!user) redirect("/login");
 
   const origin = resolveOrigin((await headers()).get("x-portal-origin"), process.env);
-  const sections = visibleSections(await loadServices(), user.groups, origin);
-
   const admin = isAdmin(user.groups);
-  const updates = admin ? await fetchUpdateCount() : null;
+  const [config, updates] = await Promise.all([loadServices(), admin ? fetchUpdateCount() : null]);
+  const sections = visibleSections(config, user.groups, origin);
 
   return <Portal sections={sections} user={user} admin={admin} updates={updates} />;
 }

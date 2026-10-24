@@ -9,6 +9,15 @@ async function forward(request: NextRequest, { params }: Context, method: "GET" 
   const user = await getUser();
   if (!user || !isAdmin(user.groups)) return new Response(null, { status: 404 });
 
+  if (method === "POST") {
+    // Every *.payoux.net app is same-site, so SameSite=Lax cookies alone do not stop a cross-origin POST.
+    const portal = new URL(process.env.AUTH_URL ?? request.url).origin;
+    if (request.headers.get("origin") !== portal) {
+      return Response.json({ error: "Origine refusée" }, { status: 403 });
+    }
+    if (!user.email) return Response.json({ error: "Utilisateur sans adresse e-mail" }, { status: 403 });
+  }
+
   const { path } = await params;
   if (path.some((segment) => segment === "" || segment === "." || segment === "..")) {
     return new Response(null, { status: 404 });

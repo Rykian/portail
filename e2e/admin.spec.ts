@@ -21,12 +21,37 @@ test("menu has the Administration entry", async ({ page }) => {
 });
 
 test("avatar shows the update count and the menu links to the updates page", async ({ page }) => {
-  await expect(page.getByLabel("4 mises à jour")).toHaveText("4");
+  const trigger = page.getByRole("button", { name: "Menu du compte, 4 mises à jour", exact: true });
+  await expect(page.getByTestId("updates-badge")).toHaveText("4");
 
-  await page.getByRole("button", { name: "Menu du compte" }).click();
+  await trigger.click();
   const items = page.getByRole("menuitem");
   await expect(items).toHaveText(["Mon compte", "Administration", "Mises à jour (4)", "Se déconnecter"]);
   await expect(page.getByRole("menuitem", { name: "Mises à jour (4)" })).toHaveAttribute("href", "/admin/updates");
+});
+
+test("the proxy forwards admin requests to the updater", async ({ request, baseURL }) => {
+  const stacks = await request.get("/api/updates/stacks");
+  expect(stacks.status()).toBe(200);
+  expect((await stacks.json()).stacks).toHaveLength(5);
+
+  expect((await request.get("/api/updates/%2E%2E/health")).status()).toBe(404);
+
+  const origin = new URL(baseURL!).origin;
+  const check = await request.post("/api/updates/checks", { headers: { origin }, data: {} });
+  expect(check.status()).toBe(200);
+  expect(await check.json()).toEqual({ jobId: 1 });
+  const last = await request.get("http://localhost:3101/__last-user");
+  expect(await last.json()).toEqual({ user: "dev@localhost" });
+});
+
+test("the proxy refuses a POST without the portal origin", async ({ request }) => {
+  const refused: Record<string, string>[] = [{}, { origin: "https://stirling.payoux.net" }];
+  for (const headers of refused) {
+    const response = await request.post("/api/updates/checks", { headers, data: {} });
+    expect(response.status()).toBe(403);
+    expect(await response.json()).toEqual({ error: "Origine refusée" });
+  }
 });
 
 test("an existing icon is shown", async ({ page }) => {

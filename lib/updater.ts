@@ -1,3 +1,4 @@
+import "server-only";
 import { stacksResponseSchema } from "@/shared/updater-api";
 
 export type UpdaterSettings = { url: string; token: string };
@@ -35,7 +36,10 @@ export async function fetchUpdateCount({ timeoutMs = 1000 }: { timeoutMs?: numbe
   const timer = setTimeout(() => controller.abort(new Error("Updater timeout")), timeoutMs);
   try {
     const response = await updaterRequest("/stacks", { signal: controller.signal });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      await response.body?.cancel();
+      return null;
+    }
     const { stacks } = stacksResponseSchema.parse(await response.json());
     return stacks.filter((stack) => stack.update).length;
   } catch {

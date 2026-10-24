@@ -35,6 +35,7 @@ test("the proxy forwards admin requests to the updater", async ({ request, baseU
   expect(stacks.status()).toBe(200);
   expect((await stacks.json()).stacks).toHaveLength(5);
 
+  // Only checks the URL never escapes /api/updates (the client normalises `..`); the guard itself is unit-tested.
   expect((await request.get("/api/updates/%2E%2E/health")).status()).toBe(404);
 
   const origin = new URL(baseURL!).origin;

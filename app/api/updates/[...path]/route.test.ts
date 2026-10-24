@@ -39,6 +39,16 @@ test("a non-admin gets a 404 and nothing is forwarded", async () => {
   expect(fetch).not.toHaveBeenCalled();
 });
 
+test.each([
+  ["..", "health"],
+  [".", "health"],
+  ["", "health"],
+])("a path with segments %j is refused, never forwarded", async (...path) => {
+  const response = await GET(new NextRequest("https://portail.payoux.net/api/updates/x"), context(...path));
+  expect(response.status).toBe(404);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
 test.each([null, "https://stirling.payoux.net"])(
   "a POST from origin %s is refused, never forwarded",
   async (origin) => {

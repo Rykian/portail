@@ -19,7 +19,11 @@ export function UserMenu({ user, admin, updates }: { user: PortalUser; admin: bo
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label={pending > 0 ? `Menu du compte, ${pending} mises à jour` : "Menu du compte"}
+        aria-label={
+          pending > 0
+            ? `Menu du compte, ${pending} ${pending === 1 ? "mise à jour" : "mises à jour"}`
+            : "Menu du compte"
+        }
         className="relative rounded-full"
       >
         <Avatar>

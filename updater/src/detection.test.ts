@@ -146,6 +146,44 @@ describe("version variable", () => {
   });
 });
 
+test("variable service error becomes a stack error", async () => {
+  const stack = await makeStack("mealie", "VERSION=v3.4.0\n");
+  docker.services.set(stack.dir, [{ name: "m", image: "ghcr.io/o/m:v3.4.0", rawImage: "ghcr.io/o/m:${VERSION}" }]);
+  registry.errors.set("o/m", new Error("Registry responded 429"));
+  const status = await checkStack(stack, versionConfig(), null, deps);
+  expect(status).toMatchObject({ error: "Registry responded 429", button: false });
+});
+
+test("unreadable version file becomes a stack error", async () => {
+  const stack = await makeStack("direnv");
+  await mkdir(join(stack.dir, ".env"));
+  docker.services.set(stack.dir, []);
+  const status = await checkStack(stack, versionConfig(), null, deps);
+  expect(status.error).not.toBeNull();
+  expect(status.button).toBe(false);
+});
+
+test("variable kind matches ${VAR} and ${VAR:-x} but not a longer name", async () => {
+  const stack = await makeStack("kinds", "VERSION=v1.0.0\n");
+  docker.services.set(stack.dir, [
+    { name: "a", image: "o/a:v1.0.0", rawImage: "o/a:${VERSION}" },
+    { name: "b", image: "o/b:v1.0.0", rawImage: "o/b:${VERSION:-x}" },
+    { name: "c", image: "o/c:v1.0.0", rawImage: "o/c:${VERSION_SUFFIX}" },
+  ]);
+  const status = await checkStack(stack, versionConfig(), null, deps);
+  expect(status.services.map((s) => s.kind)).toEqual(["variable", "variable", "literal"]);
+});
+
+test("Docker Hub library image compares digests", async () => {
+  const stack = await makeStack("hub");
+  docker.services.set(stack.dir, [{ name: "n", image: "nginx:latest", rawImage: "nginx:latest" }]);
+  docker.images.set("nginx:latest", { id: "i", repoDigests: ["nginx@sha256:aaa"], version: null, created: null });
+  registry.digests.set("library/nginx:latest", "sha256:aaa");
+  expect((await checkStack(stack, config(), null, deps)).services[0]?.update).toBe(false);
+  registry.digests.set("library/nginx:latest", "sha256:bbb");
+  expect((await checkStack(stack, config(), null, deps)).services[0]?.update).toBe(true);
+});
+
 test("literal version has an update but no button", async () => {
   const stack = await makeStack("gate");
   docker.services.set(stack.dir, [{ name: "gate", image: "nginx:1.31.6-alpine", rawImage: "nginx:1.31.6-alpine" }]);
@@ -217,6 +255,7 @@ test("registry error on one service leaves the other checked", async () => {
   expect(status.services[0]).toMatchObject({ update: false, error: "Registry responded 429 for ghcr.io/o/a:latest" });
   expect(status.services[1]).toMatchObject({ update: true, error: null });
   expect(status.error).toBeNull();
+  expect(status).toMatchObject({ update: true, button: true });
 });
 
 test("composeServices failure becomes a stack error", async () => {

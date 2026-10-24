@@ -86,7 +86,7 @@ export class FakeRegistry implements Registry {
   async digest(ref: ImageRef): Promise<string> {
     this.check("digest", ref);
     const digest = this.digests.get(`${ref.repository}:${ref.digest ?? ref.tag}`);
-    if (!digest) throw new Error(`no digest scripted for ${ref.repository}:${ref.tag}`);
+    if (!digest) throw new Error(`no digest scripted for ${ref.repository}:${ref.digest ?? ref.tag}`);
     return digest;
   }
 

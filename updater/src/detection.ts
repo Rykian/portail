@@ -17,10 +17,21 @@ type Checked = { status: ServiceStatus; authentikKind: "patch" | "minor" | null 
 
 function kindOf(service: ComposeService, config: StackConfig): ServiceKind {
   const variable = config.version?.variable;
-  if (variable && service.rawImage.includes(`\${${variable}`)) return "variable";
+  if (variable && new RegExp(`\\$\\{${variable}[}:]`).test(service.rawImage)) return "variable";
   if (service.image.includes("@sha256:")) return "pinned";
   return isLiteralVersion(parseImageRef(service.image).tag) ? "literal" : "floating";
 }
+
+const baseStatus = (service: ComposeService, kind: ServiceKind): ServiceStatus => ({
+  name: service.name,
+  image: service.image,
+  kind,
+  current: null,
+  available: null,
+  newImageDate: null,
+  update: false,
+  error: null,
+});
 
 async function checkService(
   service: ComposeService,
@@ -28,16 +39,7 @@ async function checkService(
   { docker, registry }: DetectionDeps,
 ): Promise<Checked> {
   const kind = kindOf(service, config);
-  const base: ServiceStatus = {
-    name: service.name,
-    image: service.image,
-    kind,
-    current: null,
-    available: null,
-    newImageDate: null,
-    update: false,
-    error: null,
-  };
+  const base = baseStatus(service, kind);
   const ref = parseImageRef(service.image);
 
   return match(kind)
@@ -74,16 +76,7 @@ async function safeCheckService(service: ComposeService, config: StackConfig, de
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      status: {
-        name: service.name,
-        image: service.image,
-        kind: kindOf(service, config),
-        current: null,
-        available: null,
-        newImageDate: null,
-        update: false,
-        error: message,
-      },
+      status: { ...baseStatus(service, kindOf(service, config)), error: message },
       authentikKind: null,
     };
   }
@@ -128,8 +121,14 @@ export async function checkStack(
   let current: string | null;
   let available: string | null;
   if (config.version) {
-    current = await readVariableFile(join(stack.dir, config.version.file), config.version.variable).catch(() => null);
-    available = find(statuses, (s) => s.kind === "variable")?.available ?? null;
+    try {
+      current = await readVariableFile(join(stack.dir, config.version.file), config.version.variable);
+    } catch (error) {
+      return { ...base, services: statuses, error: error instanceof Error ? error.message : String(error) };
+    }
+    const variableService = find(statuses, (s) => s.kind === "variable");
+    if (variableService?.error) return { ...base, services: statuses, error: variableService.error };
+    available = variableService?.available ?? null;
   } else {
     const first = find(updated, (c) => c.status.current !== null && c.status.available !== null)?.status;
     current = first?.current ?? null;

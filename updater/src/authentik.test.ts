@@ -72,6 +72,9 @@ beforeEach(async () => {
   logs = [];
   requested = [];
   statuses = {};
+  docker.containersByProject.set("authentik", [
+    { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:old" },
+  ]);
   await writeFile(join(dir, "compose.yml"), localCompose);
   await writeFile(join(dir, ".env"), "AUTHENTIK_TAG=2026.8.4\n");
 });
@@ -152,5 +155,27 @@ test("before command failure stops before any change", async () => {
   docker.shellExit = () => 2;
   expect(await authentikMinorUpdate(ctx({ before: ["backup"] }), fetchFn)).toBe("failed");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
+  expect(docker.composeCalls).toEqual([]);
+});
+
+test("a stopped stack gets the new compose.yml and version, is pulled and stays stopped", async () => {
+  docker.containersByProject.set("authentik", []);
+  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("success");
+  expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
+  expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
+  expect(logs).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
+});
+
+test("a target that is not newer than the .env value is refused before anything is fetched or changed", async () => {
+  await writeFile(join(dir, ".env"), "AUTHENTIK_TAG=2026.10.3\n");
+  const message = "la version 2026.10.2 n'est pas plus récente que 2026.10.3 déjà dans .env : mise à jour annulée";
+  expect(await authentikPreview(ctx(), fetchFn)).toEqual({ ok: false, error: message });
+  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
+  expect(logs).toContain(message);
+  expect(requested).toEqual([]);
+  expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
+  expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.3\n");
+  expect(store.rollback("authentik")).toBeNull();
   expect(docker.composeCalls).toEqual([]);
 });

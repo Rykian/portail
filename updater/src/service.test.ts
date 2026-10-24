@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, expect, test } from "vitest";
 import { createConfigLoader } from "./config";
@@ -229,6 +229,53 @@ test("a failed update exposes the rollback saved for it, and rollback() starts a
   await jobs.idle();
   expect(service.job(job.id)?.status).toBe("success");
   expect(service.stacks().stacks[0]?.rollback).toBeNull();
+});
+
+test("a version stack whose only change is a floating sidecar updates like pull mode", async () => {
+  const sidecar = "postgres:16-alpine";
+  await makeStack(
+    "app",
+    [
+      { name: "app", image: "ghcr.io/acme/app:1.0.0", rawImage: "ghcr.io/acme/app:${APP_TAG}" },
+      { name: "db", image: sidecar, rawImage: sidecar },
+    ],
+    { ".env": "APP_TAG=1.0.0\n" },
+  );
+  await writeFile(configPath, "stacks:\n  app:\n    version: { file: .env, variable: APP_TAG }\n");
+  registry.tagsByRepository.set("acme/app", ["1.0.0"]);
+  registry.digests.set("library/postgres:16-alpine", "sha256:new");
+  docker.images.set(sidecar, { id: "old", repoDigests: ["postgres@sha256:old"], version: null, created: null });
+  docker.containersByProject.set("app", [
+    { service: "app", state: "running", exitCode: 0, health: null, imageId: "app" },
+    { service: "db", state: "running", exitCode: 0, health: null, imageId: "old" },
+  ]);
+  docker.composeExit = (args) => {
+    if (args[0] === "pull") {
+      docker.images.set(sidecar, { id: "new", repoDigests: ["postgres@sha256:new"], version: null, created: null });
+    }
+    return 0;
+  };
+  await check();
+  expect(service.stacks().stacks[0]).toMatchObject({ update: true, button: true, available: null });
+
+  const response = await service.update("app", {}, null);
+  expect(response).toEqual({ jobId: expect.any(Number) });
+  await jobs.idle();
+  expect(service.history(null).jobs[0]).toMatchObject({ kind: "update", status: "success" });
+  expect(await readFile(join(root, "app", ".env"), "utf8")).toBe("APP_TAG=1.0.0\n");
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"], ["up", "-d"]]);
+  expect(store.rollback("app")).toMatchObject({ to: "l'image précédente", data: { kind: "pull" } });
+  expect(service.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
+});
+
+test("update-all pulls a stopped stack without starting it", async () => {
+  await floatingStack({ local: "1.0", remote: "1.1" });
+  await check();
+  const job = service.updateAll(null);
+  await jobs.idle();
+  expect(service.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
+  expect(store.jobLog(job.id)).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
 });
 
 test("updateAll runs the planned stacks, refuses when nothing to do", async () => {

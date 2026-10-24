@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import { readFile } from "node:fs/promises";
 import { readVariableFile, writeFileAtomic, writeVariableFile } from "./env-file";
-import { checkHealth, fail, runBeforeCommands, runCompose, type StackContext } from "./update";
+import { fail, notNewerMessage, pullAndStart, runBeforeCommands, type StackContext } from "./update";
+import { compareVersions } from "./versions";
 
 type Preview =
   | { ok: true; from: string; to: string; diff: string; upstreamTarget: string; localCompose: string }
@@ -36,6 +37,7 @@ async function prepare({ stack, config, status }: StackContext, fetchFn: typeof 
   const from = await readVariableFile(join(stack.dir, version.file), version.variable);
   if (from === null) fail(`variable ${version.variable} absente de ${version.file}`);
   const to = status.available ?? fail("aucune version disponible");
+  if (compareVersions(to, from) <= 0) return { ok: false, error: notNewerMessage(to, from, version.file) };
   const currentMinor = minorOf(from);
   const targetMinor = minorOf(to);
 
@@ -94,9 +96,7 @@ export async function authentikMinorUpdate(
     log(`== ${version.variable}=${plan.to}`);
     await writeVariableFile(join(stack.dir, version.file), version.variable, plan.to);
 
-    await runCompose(ctx, ["pull"]);
-    await runCompose(ctx, ["up", "-d"]);
-    await checkHealth(ctx, before);
+    await pullAndStart(ctx, before);
     return "success";
   } catch (error) {
     log(error instanceof Error ? error.message : String(error));

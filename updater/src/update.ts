@@ -8,6 +8,7 @@ import type { ComposeService, ContainerState, Docker, LogSink } from "./docker";
 import { readVariableFile, writeFileAtomic, writeVariableFile } from "./env-file";
 import { waitHealthy } from "./health";
 import type { RollbackState, Store } from "./store";
+import { compareVersions } from "./versions";
 
 export type StackContext = {
   stack: DiscoveredStack;
@@ -43,6 +44,20 @@ export async function checkHealth(ctx: StackContext, before: ContainerState[]): 
     for (const problem of result.problems) ctx.log(problem);
     fail("la vérification de santé a échoué");
   }
+}
+
+export const notNewerMessage = (target: string, value: string, file: string): string =>
+  `la version ${target} n'est pas plus récente que ${value} déjà dans ${file} : mise à jour annulée`;
+
+/** Pulls, then starts the stack and checks its health, unless nothing of it was running: a stopped stack stays stopped. */
+export async function pullAndStart(ctx: StackContext, before: ContainerState[]): Promise<void> {
+  await runCompose(ctx, ["pull"]);
+  if (!before.some((container) => container.state === "running")) {
+    ctx.log("pile arrêtée : images téléchargées, pile laissée arrêtée");
+    return;
+  }
+  await runCompose(ctx, ["up", "-d"]);
+  await checkHealth(ctx, before);
 }
 
 async function savePullRollback(
@@ -99,13 +114,20 @@ export async function updateStack(ctx: StackContext): Promise<Result> {
       .with("version", "recipe", () => config.version ?? fail("configuration de version absente"))
       .exhaustive();
 
-    const target = versionFile === null ? null : (status.available ?? fail("aucune version disponible"));
+    // Version or recipe mode without a variable target (only a floating sidecar changed) updates like pull mode.
+    const target = versionFile === null ? null : status.available;
 
-    if (versionFile === null) {
-      await savePullRollback(ctx, services, before, status.current ?? "l'image précédente");
+    if (versionFile === null || target === null) {
+      await savePullRollback(
+        ctx,
+        services,
+        before,
+        (status.mode === "pull" ? status.current : null) ?? "l'image précédente",
+      );
     } else {
       const value = await readVariableFile(join(stack.dir, versionFile.file), versionFile.variable);
       if (value === null) fail(`variable ${versionFile.variable} absente de ${versionFile.file}`);
+      if (compareVersions(target, value) <= 0) fail(notNewerMessage(target, value, versionFile.file));
       store.saveRollback({
         stack: stack.name,
         to: value,
@@ -120,9 +142,7 @@ export async function updateStack(ctx: StackContext): Promise<Result> {
       await writeVariableFile(join(stack.dir, versionFile.file), versionFile.variable, target);
     }
 
-    await runCompose(ctx, ["pull"]);
-    await runCompose(ctx, ["up", "-d"]);
-    await checkHealth(ctx, before);
+    await pullAndStart(ctx, before);
     return "success";
   } catch (error) {
     log(error instanceof Error ? error.message : String(error));

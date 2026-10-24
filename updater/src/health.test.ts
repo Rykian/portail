@@ -37,7 +37,12 @@ describe("evaluateHealth", () => {
 
   test("running but starting is a problem", () => {
     const result = evaluateHealth([c("app")], [c("app", { health: "starting" })]);
-    expect(result).toEqual({ ok: false, problems: ["app : starting"] });
+    expect(result).toEqual({ ok: false, problems: ["app : encore en démarrage"] });
+  });
+
+  test("a waited duration is named when the container is still starting", () => {
+    const result = evaluateHealth([c("app")], [c("app", { health: "starting" })], 60);
+    expect(result).toEqual({ ok: false, problems: ["app : encore en démarrage après 60 s"] });
   });
 
   test("exited with code 0 after (one-shot) is ok", () => {
@@ -124,7 +129,7 @@ describe("waitHealthy", () => {
 
     const result = await waitHealthy(read, [c("app")], { ...clock });
 
-    expect(result).toEqual({ ok: false, problems: ["app : starting"] });
+    expect(result).toEqual({ ok: false, problems: ["app : encore en démarrage après 60 s"] });
     expect(clock.now()).toBeGreaterThanOrEqual(60_000);
     expect(reads).toBeGreaterThanOrEqual(30);
     expect(reads).toBeLessThanOrEqual(32);
@@ -167,7 +172,7 @@ describe("waitHealthy", () => {
 
     const result = await waitHealthy(read, [c("app")], { ...clock, timeoutMs: 10_000 });
 
-    expect(result).toEqual({ ok: false, problems: ["app : starting"] });
+    expect(result).toEqual({ ok: false, problems: ["app : encore en démarrage après 10 s"] });
     expect(reads).toBe(6);
   });
 

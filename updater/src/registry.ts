@@ -13,6 +13,7 @@ const MANIFEST_ACCEPT = [
   "application/vnd.docker.distribution.manifest.v2+json",
 ].join(", ");
 
+const MAX_REDIRECTS = 5;
 const VERSION_LABEL = "org.opencontainers.image.version";
 
 type Manifest = {
@@ -30,56 +31,62 @@ export function createHttpRegistry(options: { fetch?: typeof fetch; timeoutMs?: 
   const send = (url: string | URL, init: RequestInit) =>
     doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 
-  async function fetchToken(challenge: string, ref: ImageRef): Promise<string> {
+  async function fetchToken(challenge: string, repository: string, image: string): Promise<string> {
     const param = (name: string) => new RegExp(`${name}="([^"]*)"`).exec(challenge)?.[1];
     const realm = param("realm");
-    if (!realm) throw new Error(`Registry auth challenge without realm for ${describe(ref)}`);
+    if (!realm) throw new Error(`Registry auth challenge without realm for ${image}`);
     const url = new URL(realm);
     const service = param("service");
     if (service) url.searchParams.set("service", service);
-    url.searchParams.set("scope", param("scope") ?? `repository:${ref.repository}:pull`);
+    url.searchParams.set("scope", param("scope") ?? `repository:${repository}:pull`);
     const response = await send(url, { method: "GET" });
-    if (!response.ok) throw failure(response.status, ref);
+    if (!response.ok) throw new Error(`Registry token endpoint responded ${response.status} for ${image}`);
     const body = (await response.json()) as { token?: string; access_token?: string };
     const token = body.token ?? body.access_token;
-    if (!token) throw new Error(`Registry token response without token for ${describe(ref)}`);
+    if (!token) throw new Error(`Registry token response without token for ${image}`);
     return token;
   }
 
-  async function request(ref: ImageRef, url: URL, method: string, accept: string, reference: string) {
-    const key = `${ref.registry}/${ref.repository}`;
-    const attempt = () => {
-      const headers: Record<string, string> = { Accept: accept };
-      const token = tokens.get(key);
-      if (token) headers.Authorization = `Bearer ${token}`;
-      return send(url, { method, headers, redirect: "manual" });
-    };
+  // Tokens are cached per host + repository path, so a token is never sent to another host.
+  const cacheKey = (url: URL) =>
+    `${url.host}/${/^\/v2\/(.+?)\/(?:manifests|blobs|tags)\//.exec(url.pathname)?.[1] ?? ""}`;
 
-    let response = await attempt();
-    if (response.status === 401 && !tokens.has(key)) {
-      const challenge = response.headers.get("www-authenticate") ?? "";
-      tokens.set(key, await fetchToken(challenge, ref));
-      response = await attempt();
-    }
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get("location");
-      if (location) {
-        const target = new URL(location, url);
+  async function request(ref: ImageRef, start: URL, method: string, accept: string, target: string) {
+    const image = describe(ref, target);
+    let url = start;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const key = cacheKey(url);
+      const attempt = () => {
         const headers: Record<string, string> = { Accept: accept };
         const token = tokens.get(key);
-        if (token && target.host === url.host) headers.Authorization = `Bearer ${token}`;
-        response = await send(target, { method, headers });
+        if (token) headers.Authorization = `Bearer ${token}`;
+        return send(url, { method, headers, redirect: "manual" });
+      };
+
+      let response = await attempt();
+      if (response.status === 401) {
+        const challenge = response.headers.get("www-authenticate");
+        if (!challenge) throw new Error(`Registry responded 401 without auth challenge for ${image}`);
+        const repository = key.slice(key.indexOf("/") + 1) || ref.repository;
+        tokens.set(key, await fetchToken(challenge, repository, image));
+        response = await attempt();
       }
+      const location = response.headers.get("location");
+      if (response.status >= 300 && response.status < 400 && location) {
+        url = new URL(location, url);
+        continue;
+      }
+      if (!response.ok) throw new Error(`Registry responded ${response.status} for ${image}`);
+      return response;
     }
-    if (!response.ok) throw failure(response.status, ref, reference);
-    return response;
+    throw new Error(`Too many redirects for ${image}`);
   }
 
   const v2 = (ref: ImageRef, path: string) => new URL(`https://${ref.registry}/v2/${ref.repository}/${path}`);
-  const reference = (ref: ImageRef) => ref.digest ?? ref.tag;
+  const referenceOf = (ref: ImageRef) => ref.digest ?? ref.tag;
 
-  async function getManifest(ref: ImageRef, ref2: string): Promise<Manifest> {
-    const response = await request(ref, v2(ref, `manifests/${ref2}`), "GET", MANIFEST_ACCEPT, ref2);
+  async function getManifest(ref: ImageRef, manifestRef: string): Promise<Manifest> {
+    const response = await request(ref, v2(ref, `manifests/${manifestRef}`), "GET", MANIFEST_ACCEPT, manifestRef);
     return (await response.json()) as Manifest;
   }
 
@@ -87,10 +94,10 @@ export function createHttpRegistry(options: { fetch?: typeof fetch; timeoutMs?: 
     async digest(ref) {
       const response = await request(
         ref,
-        v2(ref, `manifests/${reference(ref)}`),
+        v2(ref, `manifests/${referenceOf(ref)}`),
         "HEAD",
         MANIFEST_ACCEPT,
-        reference(ref),
+        referenceOf(ref),
       );
       const digest = response.headers.get("docker-content-digest");
       if (!digest) throw new Error(`No Docker-Content-Digest for ${describe(ref)}`);
@@ -98,7 +105,7 @@ export function createHttpRegistry(options: { fetch?: typeof fetch; timeoutMs?: 
     },
 
     async details(ref) {
-      let manifest = await getManifest(ref, reference(ref));
+      let manifest = await getManifest(ref, referenceOf(ref));
       if (manifest.manifests) {
         const amd64 = manifest.manifests.find((m) => m.platform?.os === "linux" && m.platform.architecture === "amd64");
         if (!amd64) throw new Error(`No linux/amd64 manifest for ${describe(ref)}`);
@@ -110,7 +117,7 @@ export function createHttpRegistry(options: { fetch?: typeof fetch; timeoutMs?: 
         v2(ref, `blobs/${manifest.config.digest}`),
         "GET",
         "application/json",
-        reference(ref),
+        referenceOf(ref),
       );
       const config = (await response.json()) as ConfigBlob;
       return { version: config.config?.Labels?.[VERSION_LABEL] ?? null, created: config.created ?? null };
@@ -130,11 +137,7 @@ export function createHttpRegistry(options: { fetch?: typeof fetch; timeoutMs?: 
     },
   };
 
-  function describe(ref: ImageRef, reference_ = reference(ref)) {
-    return `${ref.registry}/${ref.repository}:${reference_}`;
-  }
-
-  function failure(status: number, ref: ImageRef, reference_ = reference(ref)) {
-    return new Error(`Registry responded ${status} for ${describe(ref, reference_)}`);
+  function describe(ref: ImageRef, target = referenceOf(ref)) {
+    return `${ref.registry}/${ref.repository}:${target}`;
   }
 }

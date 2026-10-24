@@ -139,3 +139,50 @@ test("non-2xx throws with status and image", async () => {
   const { registry } = setup(() => new Response(null, { status: 429 }));
   await expect(registry.digest(nginx)).rejects.toThrow(/429.*registry-1\.docker\.io\/library\/nginx:latest/);
 });
+
+test("a rejected cached token is refreshed", async () => {
+  let valid = "A";
+  let issued = 0;
+  const { calls, registry } = setup((call) => {
+    if (call.url.startsWith("https://auth.docker.io/token")) return json({ token: ["A", "B"][issued++]! });
+    if (call.headers.get("authorization") !== `Bearer ${valid}`)
+      return new Response(null, { status: 401, headers: { "www-authenticate": CHALLENGE } });
+    return new Response(null, { status: 200, headers: { "docker-content-digest": "sha256:abc" } });
+  });
+  await registry.digest(nginx);
+  valid = "B";
+  expect(await registry.digest(nginx)).toBe("sha256:abc");
+  expect(calls.filter((c) => c.url.startsWith("https://auth.docker.io/token"))).toHaveLength(2);
+  expect(calls.at(-1)!.headers.get("authorization")).toBe("Bearer B");
+});
+
+test("redirect to another registry runs its own challenge", async () => {
+  const lscr = parseImageRef("lscr.io/linuxserver/sonarr:latest");
+  const { calls, registry } = setup((call) => {
+    if (call.url.startsWith("https://lscr.io/"))
+      return new Response(null, {
+        status: 307,
+        headers: { location: "https://ghcr.io/v2/linuxserver/sonarr/manifests/latest" },
+      });
+    if (call.url.startsWith("https://ghcr.io/token")) return json({ token: "gh" });
+    if (call.headers.get("authorization") !== "Bearer gh")
+      return new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": 'Bearer realm="https://ghcr.io/token",service="ghcr.io"' },
+      });
+    return new Response(null, { status: 200, headers: { "docker-content-digest": "sha256:gh" } });
+  });
+  expect(await registry.digest(lscr)).toBe("sha256:gh");
+  expect(calls.find((c) => c.url.startsWith("https://lscr.io/"))!.headers.get("authorization")).toBeNull();
+  const tokenUrl = new URL(calls.find((c) => c.url.startsWith("https://ghcr.io/token"))!.url);
+  expect(tokenUrl.searchParams.get("scope")).toBe("repository:linuxserver/sonarr:pull");
+});
+
+test("401 without challenge and redirect loops throw", async () => {
+  const a = setup(() => new Response(null, { status: 401 }));
+  await expect(a.registry.digest(nginx)).rejects.toThrow(/401/);
+  const b = setup(
+    () => new Response(null, { status: 302, headers: { location: "https://registry-1.docker.io/loop" } }),
+  );
+  await expect(b.registry.digest(nginx)).rejects.toThrow(/redirects/);
+});

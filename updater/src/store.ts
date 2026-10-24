@@ -127,7 +127,7 @@ export class Store {
 
   history(cursor: number | null, limit = 20): HistoryPage {
     const rows = this.db
-      .query("SELECT * FROM jobs WHERE (?1 IS NULL OR id < ?1) ORDER BY id DESC LIMIT ?2")
+      .query("SELECT * FROM jobs WHERE kind != 'check' AND (?1 IS NULL OR id < ?1) ORDER BY id DESC LIMIT ?2")
       .all(cursor, limit + 1) as JobRow[];
     const page = rows.slice(0, limit).map(toJob);
     const nextCursor = rows.length > limit ? (page[page.length - 1]?.id ?? null) : null;

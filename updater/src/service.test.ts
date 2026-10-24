@@ -110,7 +110,7 @@ test("update on a confirm stack without confirm answers needsConfirm and starts 
   const response = await service.update("web", {}, "a@b.c");
   expect(response).toEqual({ needsConfirm: { from: "1.0", to: "1.1", diff: null, warning: WARNING } });
   expect(jobs.running()).toBeNull();
-  expect(service.history(null).jobs.map((job) => job.kind)).toEqual(["check"]);
+  expect(service.history(null).jobs).toEqual([]);
 
   const started = await service.update("web", { confirm: true }, "a@b.c");
   expect(started).toEqual({ jobId: expect.any(Number) });
@@ -205,6 +205,26 @@ test("rollback needs a rollback state, then restores and re-checks", async () =>
 
   const job = await service.rollback("web", "a@b.c");
   expect(job.kind).toBe("rollback");
+  expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
+  await jobs.idle();
+  expect(service.job(job.id)?.status).toBe("success");
+  expect(service.stacks().stacks[0]?.rollback).toBeNull();
+});
+
+test("a failed update exposes the rollback saved for it, and rollback() starts a job", async () => {
+  await floatingStack({ local: "1.0", remote: "1.1" });
+  docker.containersByProject.set("web", [
+    { service: "web", state: "running", exitCode: 0, health: null, imageId: "old" },
+  ]);
+  await check();
+  expect(service.stacks().stacks[0]?.rollback).toBeNull();
+  docker.composeExit = (args) => (args[0] === "up" ? 1 : 0);
+  await service.update("web", {}, null);
+  await jobs.idle();
+
+  expect(service.stacks().stacks[0]).toMatchObject({ rollback: { to: "1.0" } });
+  docker.composeExit = () => 0;
+  const job = await service.rollback("web", "a@b.c");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
   expect(service.job(job.id)?.status).toBe("success");

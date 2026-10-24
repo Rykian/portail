@@ -67,7 +67,7 @@ export class UpdaterService {
   stacks(): StacksResponse {
     const { store, jobs } = this.deps;
     return {
-      stacks: store.stackStatuses(),
+      stacks: store.stackStatuses().map((status) => this.withRollback(status)),
       lastCheck: store.getMeta("lastCheck"),
       configError: store.getMeta("configError"),
       runningJob: jobs.running(),
@@ -124,8 +124,9 @@ export class UpdaterService {
 
   async rollback(name: string, user: string | null): Promise<Job> {
     const { status } = await this.lookup(name);
-    if (!status.rollback) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
-    const step: JobStep = { stack: name, status: "pending", from: status.current, to: status.rollback.to };
+    const saved = this.deps.store.rollback(name);
+    if (!saved) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
+    const step: JobStep = { stack: name, status: "pending", from: status.current, to: saved.to };
     return this.deps.jobs.start({ kind: "rollback", user, steps: [step] }, (ctx) =>
       this.singleStep(ctx.setSteps, step, () => this.runRollback(name, ctx.log)),
     );
@@ -154,6 +155,12 @@ export class UpdaterService {
 
   history(cursor: number | null): HistoryPage {
     return this.deps.store.history(cursor);
+  }
+
+  /** The `rollbacks` table is the source of truth: the stored status only holds the state of the last check. */
+  private withRollback(status: StackStatus): StackStatus {
+    const saved = this.deps.store.rollback(status.name);
+    return { ...status, rollback: saved ? { to: saved.to } : null };
   }
 
   private detectionDeps(): DetectionDeps {

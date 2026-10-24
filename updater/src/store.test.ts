@@ -34,6 +34,16 @@ test("history paginates newest first", () => {
   expect(second.nextCursor).toBeNull();
 });
 
+test("history leaves out check jobs, which stay reachable by id", () => {
+  const store = setup();
+  const update = store.createJob(input("2026-01-01T00:00:00.000Z"));
+  const check = store.createJob({ ...input("2026-01-02T00:00:00.000Z"), kind: "check", user: null });
+  const rollback = store.createJob({ ...input("2026-01-03T00:00:00.000Z"), kind: "rollback" });
+  expect(store.history(null).jobs.map((j) => j.id)).toEqual([rollback.id, update.id]);
+  expect(store.history(rollback.id, 1)).toMatchObject({ jobs: [{ id: update.id }], nextCursor: null });
+  expect(store.job(check.id)).toMatchObject({ kind: "check" });
+});
+
 test("markInterrupted only touches running jobs", () => {
   const store = setup();
   const a = store.createJob(input("2026-01-01T00:00:00.000Z"));

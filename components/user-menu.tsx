@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { logout } from "@/app/actions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -13,14 +14,23 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { initials, type PortalUser } from "@/lib/user";
 
-export function UserMenu({ user, admin }: { user: PortalUser; admin: boolean }) {
+export function UserMenu({ user, admin, updates }: { user: PortalUser; admin: boolean; updates: number | null }) {
+  const pending = updates ?? 0;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger aria-label="Menu du compte" className="rounded-full">
+      <DropdownMenuTrigger aria-label="Menu du compte" className="relative rounded-full">
         <Avatar>
           {user.image && <AvatarImage src={user.image} alt="" />}
           <AvatarFallback>{initials(user.name)}</AvatarFallback>
         </Avatar>
+        {pending > 0 && (
+          <span
+            aria-label={`${pending} mises à jour`}
+            className="absolute -top-1 -right-1 min-w-5 rounded-full bg-red-600 px-1.5 text-center text-xs leading-5 font-medium text-white"
+          >
+            {pending}
+          </span>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuGroup>
@@ -36,6 +46,9 @@ export function UserMenu({ user, admin }: { user: PortalUser; admin: boolean }) 
           <>
             {/* oxlint-disable-next-line jsx-a11y/control-has-associated-label -- Base UI renders the item text inside the <a> */}
             <DropdownMenuItem render={<a href="https://auth.payoux.net/if/admin/" />}>Administration</DropdownMenuItem>
+            <DropdownMenuItem render={<Link href="/admin/updates" />}>
+              {pending > 0 ? `Mises à jour (${pending})` : "Mises à jour"}
+            </DropdownMenuItem>
           </>
         )}
         <DropdownMenuSeparator />

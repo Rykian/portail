@@ -21,16 +21,25 @@ export default defineConfig({
       testMatch: "auth-error.spec.ts",
     },
   ],
-  webServer: {
-    command: `npx next dev -p ${port}`,
-    url: `http://localhost:${port}/favicon.ico`,
-    timeout: 120_000,
-    reuseExistingServer: !process.env.CI,
-    env: {
-      SERVICES_FILE: "e2e/fixtures/services.yml",
-      ICONS_DIR: "e2e/fixtures/icons",
-      DEV_USER_GROUPS: "family",
-      AUTH_SECRET: "e2e-only-not-a-secret",
+  webServer: [
+    {
+      command: "node e2e/fake-updater.ts",
+      url: "http://localhost:3101/health",
+      reuseExistingServer: !process.env.CI,
     },
-  },
+    {
+      command: `npx next dev -p ${port}`,
+      url: `http://localhost:${port}/favicon.ico`,
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+      env: {
+        SERVICES_FILE: "e2e/fixtures/services.yml",
+        ICONS_DIR: "e2e/fixtures/icons",
+        DEV_USER_GROUPS: "family",
+        AUTH_SECRET: "e2e-only-not-a-secret",
+        UPDATER_URL: "http://localhost:3101",
+        UPDATER_TOKEN: "e2e-token",
+      },
+    },
+  ],
 });

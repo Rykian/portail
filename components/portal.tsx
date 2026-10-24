@@ -15,7 +15,17 @@ function isTyping(target: EventTarget | null): boolean {
   );
 }
 
-export function Portal({ sections, user, admin }: { sections: VisibleSection[]; user: PortalUser; admin: boolean }) {
+export function Portal({
+  sections,
+  user,
+  admin,
+  updates,
+}: {
+  sections: VisibleSection[];
+  user: PortalUser;
+  admin: boolean;
+  updates: number | null;
+}) {
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const shown = filterSections(sections, query);
@@ -55,7 +65,7 @@ export function Portal({ sections, user, admin }: { sections: VisibleSection[]; 
           aria-label="Rechercher"
           className="ml-auto max-w-sm"
         />
-        <UserMenu user={user} admin={admin} />
+        <UserMenu user={user} admin={admin} updates={updates} />
       </header>
 
       {sections.length === 0 ? (

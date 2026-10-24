@@ -20,6 +20,15 @@ test("menu has the Administration entry", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "Administration" })).toBeVisible();
 });
 
+test("avatar shows the update count and the menu links to the updates page", async ({ page }) => {
+  await expect(page.getByLabel("4 mises à jour")).toHaveText("4");
+
+  await page.getByRole("button", { name: "Menu du compte" }).click();
+  const items = page.getByRole("menuitem");
+  await expect(items).toHaveText(["Mon compte", "Administration", "Mises à jour (4)", "Se déconnecter"]);
+  await expect(page.getByRole("menuitem", { name: "Mises à jour (4)" })).toHaveAttribute("href", "/admin/updates");
+});
+
 test("an existing icon is shown", async ({ page }) => {
   const card = page.getByTestId("service-card").filter({ hasText: "Frigate" });
   await expect(card.locator("img")).toBeVisible();

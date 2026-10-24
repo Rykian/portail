@@ -21,6 +21,15 @@ test("menu has no Administration entry", async ({ page }) => {
   await expect(page.getByRole("menuitem", { name: "Administration" })).toHaveCount(0);
 });
 
+test("no update badge, no updates entry, and the updater proxy does not exist", async ({ page, request }) => {
+  await page.getByRole("button", { name: "Menu du compte" }).click();
+  await expect(page.getByRole("menuitem", { name: "Se déconnecter" })).toBeVisible();
+  await expect(page.getByLabel(/mises à jour/)).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Mises à jour/ })).toHaveCount(0);
+
+  expect((await request.get("/api/updates/stacks")).status()).toBe(404);
+});
+
 test("a missing icon falls back to the initial tile", async ({ page }) => {
   const card = page.getByTestId("service-card").filter({ hasText: "Home Assistant" });
   await expect(card.locator("img")).toHaveCount(0);

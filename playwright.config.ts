@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const port = 3100;
+const admin = { "x-dev-user-groups": "family,authentik Admins", "x-portal-origin": "lan" };
 
 export default defineConfig({
   testDir: "e2e",
@@ -13,12 +14,19 @@ export default defineConfig({
     },
     {
       name: "admin-lan",
-      testMatch: "admin.spec.ts",
-      use: { extraHTTPHeaders: { "x-dev-user-groups": "family,authentik Admins", "x-portal-origin": "lan" } },
+      testMatch: /(admin|updates)\.spec\.ts/,
+      use: { extraHTTPHeaders: admin },
     },
     {
       name: "login-error",
       testMatch: "auth-error.spec.ts",
+    },
+    {
+      // Takes the fake updater down for good: runs after every other project.
+      name: "admin-updater-down",
+      testMatch: "updater-down.spec.ts",
+      dependencies: ["family-internet", "admin-lan", "login-error"],
+      use: { extraHTTPHeaders: admin },
     },
   ],
   webServer: [

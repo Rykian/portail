@@ -129,12 +129,54 @@ const stacks = [
   stack("cloudflared", "pull", [service("cloudflared", "cloudflare/cloudflared:latest", "floating")]),
 ];
 
+// Job 1 is the stirling update; it shows up in the history once started.
+let stirlingStarted = false;
+const stirlingJob = {
+  id: 1,
+  kind: "update",
+  user: "dev@localhost",
+  startedAt: "2026-10-24T09:00:00.000Z",
+  endedAt: "2026-10-24T09:01:00.000Z",
+  status: "success",
+  steps: [{ stack: "stirling", status: "success", from: null, to: null }],
+};
+const stirlingEvents = [
+  { type: "log", line: "== docker compose pull" },
+  { type: "log", line: "stirling Pulled" },
+  { type: "step", step: stirlingJob.steps[0] },
+  { type: "end", status: "success" },
+];
+
+const AUTHENTIK_DIFF = `--- compose.yml (2026.8)
++++ compose.yml (2026.10)
+-    image: ghcr.io/goauthentik/server:2026.8
++    image: ghcr.io/goauthentik/server:2026.10`;
+
 const routes: Record<string, Route> = {
   "GET /stacks": () => ({
     status: 200,
     body: { stacks, lastCheck: CHECKED_AT, configError: null, runningJob: null },
   }),
   "POST /checks": () => ({ status: 200, body: { jobId: 1 } }),
+  "POST /stacks/stirling/update": () => {
+    stirlingStarted = true;
+    return { status: 200, body: { jobId: 1 } };
+  },
+  // Never started in the e2e run: the test cancels the confirmation.
+  "POST /stacks/authentik/update": () => {
+    const warning = "Le retour arrière peut échouer : la sauvegarde vzdump reste le filet de sécurité.";
+    return {
+      status: 200,
+      body: { needsConfirm: { from: "2026.8.4", to: "2026.10.2", diff: AUTHENTIK_DIFF, warning } },
+    };
+  },
+  "GET /jobs/1/events": (_request, _url, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    for (const event of stirlingEvents) response.write(`data: ${JSON.stringify(event)}\n\n`);
+    response.end();
+    return null;
+  },
+  "GET /history": () => ({ status: 200, body: { jobs: stirlingStarted ? [stirlingJob] : [], nextCursor: null } }),
 };
 
 function send(response: ServerResponse, { status, body }: Reply) {

@@ -48,3 +48,8 @@ test("a blank query shows everything", async ({ page }) => {
   await page.getByLabel("Rechercher").fill("   ");
   await expect(page.getByTestId("service-card")).toHaveCount(3);
 });
+
+test("the updates page does not exist for non-admins", async ({ page }) => {
+  const response = await page.goto("/admin/updates");
+  expect(response?.status()).toBe(404);
+});

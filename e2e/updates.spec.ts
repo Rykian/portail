@@ -75,6 +75,19 @@ test("authentik confirmed: the page sends the confirmation and the job runs", as
   await expect(page.getByTestId("job-status")).toHaveText("réussie");
 });
 
+test("the rollback confirmation warns about migrations only for stacks that may migrate", async ({ page }) => {
+  await page.getByRole("button", { name: "Revenir à 2026.8.3" }).click();
+  const authentik = page.getByRole("dialog", { name: "Revenir à 2026.8.3 ?" });
+  await expect(authentik).toContainText("la vraie sauvegarde est le vzdump");
+  await authentik.getByRole("button", { name: "Annuler" }).click();
+  await expect(authentik).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Revenir à v3.3.0" }).click();
+  const mealie = page.getByRole("dialog", { name: "Revenir à v3.3.0 ?" });
+  await expect(mealie).toContainText("mealie reprendra sa version précédente.");
+  await expect(mealie).not.toContainText("vzdump");
+});
+
 test("the job log recovers when its stream answers 502, e.g. while the portal restarts", async ({ page, request }) => {
   await request.post("http://localhost:3101/__fail-events?count=2");
   await page.getByRole("button", { name: "Mettre à jour stirling" }).click();

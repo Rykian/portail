@@ -47,6 +47,7 @@ function stack(
     confirm?: boolean;
     last?: boolean;
     recipe?: "authentik";
+    rollback?: string;
   } = {},
 ) {
   return {
@@ -62,7 +63,7 @@ function stack(
     available: fields.available ?? null,
     major: false,
     needsConfirm: fields.needsConfirm ?? false,
-    rollback: null,
+    rollback: fields.rollback ? { to: fields.rollback } : null,
     error: null,
     checkedAt: CHECKED_AT,
   };
@@ -90,7 +91,7 @@ const stacks = [
         update: true,
       }),
     ],
-    { update: true, button: true, current: "v3.4.0", available: "v3.5.0" },
+    { update: true, button: true, current: "v3.4.0", available: "v3.5.0", rollback: "v3.3.0" },
   ),
   stack(
     "group-gate",
@@ -127,6 +128,7 @@ const stacks = [
       needsConfirm: true,
       last: true,
       recipe: "authentik",
+      rollback: "2026.8.3",
     },
   ),
   stack("cloudflared", "pull", [service("cloudflared", "cloudflare/cloudflared:latest", "floating")]),

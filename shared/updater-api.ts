@@ -93,6 +93,10 @@ export type UpdateBody = z.infer<typeof updateBodySchema>;
 export const startResponseSchema = z.object({ jobId: z.number() });
 export type StartResponse = z.infer<typeof startResponseSchema>;
 
+/** Shown in the update and rollback confirmations of stacks that may migrate their database on start. */
+export const MIGRATION_WARNING =
+  "Ce service migre peut-être sa base au démarrage : le retour arrière peut échouer, la vraie sauvegarde est le vzdump.";
+
 export const needsConfirmResponseSchema = z.object({
   needsConfirm: z.object({
     from: z.string().nullable(),

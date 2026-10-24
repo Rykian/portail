@@ -13,7 +13,7 @@ import type { NeedsConfirmResponse } from "@/shared/updater-api";
 
 export type Confirmation =
   | { kind: "update"; stack: string; details: NeedsConfirmResponse["needsConfirm"] }
-  | { kind: "rollback"; stack: string; to: string };
+  | { kind: "rollback"; stack: string; to: string; warning: string | null };
 
 export function ConfirmDialog({
   confirmation,
@@ -48,6 +48,7 @@ export function ConfirmDialog({
             <>
               <DialogTitle>Revenir à {confirmation.to} ?</DialogTitle>
               <DialogDescription>{confirmation.stack} reprendra sa version précédente.</DialogDescription>
+              {confirmation.warning && <p className="text-destructive">{confirmation.warning}</p>}
             </>
           )}
           <DialogFooter>

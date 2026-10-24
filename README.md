@@ -58,6 +58,8 @@ Relu à chaque vérification ; un fichier invalide est signalé dans l'interface
 | `before`            | Commandes shell lancées dans le répertoire de la stack avant la mise à jour ; un code de sortie non nul fait échouer.    |
 | `beforeOnlyOnMajor` | Ne lance `before` que pour un changement de version majeure (toujours si la version est inconnue).                       |
 
+La variable de `version` doit s'écrire avec des accolades dans le `compose.yml` (`${VAR}` ou `${VAR:-défaut}`) : `$VAR` n'est pas reconnu et le service n'est alors pas vu comme piloté par la variable.
+
 Les commandes `before` s'exécutent dans le conteneur de l'updater (`sh -c`), pas sur l'hôte : l'image fournit `sh`, `tar`, `gzip` et le CLI Docker avec le plugin compose. Pour utiliser un outil d'un conteneur de la stack, passer par `docker compose exec -T`.
 
 ### Développement

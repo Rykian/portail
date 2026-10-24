@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { relativeTime } from "@/lib/relative-time";
 import { api } from "@/lib/updates-client";
-import { updateAllCount } from "@/lib/updates-view";
+import { rollbackWarning, updateAllCount } from "@/lib/updates-view";
 import {
   startResponseSchema,
   stacksResponseSchema,
@@ -101,7 +101,9 @@ export function UpdatesPage() {
     });
 
   function rollback(stack: StackStatus) {
-    if (stack.rollback) setConfirmation({ kind: "rollback", stack: stack.name, to: stack.rollback.to });
+    if (stack.rollback) {
+      setConfirmation({ kind: "rollback", stack: stack.name, to: stack.rollback.to, warning: rollbackWarning(stack) });
+    }
   }
 
   function confirm(confirmed: Confirmation) {

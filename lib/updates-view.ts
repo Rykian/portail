@@ -1,4 +1,4 @@
-import type { StackStatus } from "@/shared/updater-api";
+import { MIGRATION_WARNING, type StackStatus } from "@/shared/updater-api";
 
 export type StackRow =
   | { kind: "up-to-date" }
@@ -38,4 +38,9 @@ export function stackRow(stack: StackStatus): StackRow {
 /** Same rule as the updater's « Tout mettre à jour » plan. */
 export function updateAllCount(stacks: StackStatus[]): number {
   return stacks.filter((s) => s.update && s.button && !s.needsConfirm && !s.error).length;
+}
+
+/** Rolling back a stack that may have migrated its database is risky: same warning as the update confirmation. */
+export function rollbackWarning(stack: StackStatus): string | null {
+  return stack.confirm || stack.recipe !== null || stack.major ? MIGRATION_WARNING : null;
 }

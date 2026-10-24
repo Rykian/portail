@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
-import type { ServiceStatus, StackStatus } from "@/shared/updater-api";
-import { stackRow, updateAllCount } from "./updates-view";
+import { MIGRATION_WARNING, type ServiceStatus, type StackStatus } from "@/shared/updater-api";
+import { rollbackWarning, stackRow, updateAllCount } from "./updates-view";
 
 function service(fields: Partial<ServiceStatus> = {}): ServiceStatus {
   return {
@@ -109,4 +109,11 @@ test("update-all counts only stacks it would update", () => {
     stack({ name: "f", update: true, button: true }),
   ];
   expect(updateAllCount(stacks)).toBe(2);
+});
+
+test("the rollback warns about database migrations for confirm, recipe and major stacks only", () => {
+  expect(rollbackWarning(stack())).toBeNull();
+  expect(rollbackWarning(stack({ confirm: true }))).toBe(MIGRATION_WARNING);
+  expect(rollbackWarning(stack({ recipe: "authentik" }))).toBe(MIGRATION_WARNING);
+  expect(rollbackWarning(stack({ major: true }))).toBe(MIGRATION_WARNING);
 });

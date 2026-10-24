@@ -1,12 +1,13 @@
-import type {
-  HistoryPage,
-  Job,
-  JobEvent,
-  JobStep,
-  StackStatus,
-  StacksResponse,
-  UpdateBody,
-  UpdateResponse,
+import {
+  MIGRATION_WARNING,
+  type HistoryPage,
+  type Job,
+  type JobEvent,
+  type JobStep,
+  type StackStatus,
+  type StacksResponse,
+  type UpdateBody,
+  type UpdateResponse,
 } from "@shared/updater-api";
 import { match } from "ts-pattern";
 import { authentikMinorUpdate, authentikPreview } from "./authentik";
@@ -46,9 +47,6 @@ export type UpdaterServiceDeps = {
 };
 
 type Result = "success" | "failed";
-
-const WARNING =
-  "Ce service migre peut-être sa base au démarrage : le retour arrière peut échouer, la vraie sauvegarde est le vzdump.";
 
 const minorOf = (version: string): string => version.split(".").slice(0, 2).join(".");
 
@@ -110,7 +108,7 @@ export class UpdaterService {
           from: status.current,
           to: status.available,
           diff,
-          warning: status.confirm || status.recipe !== null ? WARNING : null,
+          warning: status.confirm || status.recipe !== null ? MIGRATION_WARNING : null,
         },
       };
     }

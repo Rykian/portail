@@ -43,3 +43,5 @@ next-env.d.ts
 /data/
 /test-results/
 /playwright-report/
+/updater/node_modules/
+/updater/data/

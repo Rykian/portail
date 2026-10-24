@@ -1,0 +1,37 @@
+# Updater configuration, mounted at /root/updater/config.yml.
+# Re-read on every check; an invalid file is reported in the UI and the
+# previous valid configuration is kept. Values below are illustrative.
+
+# Directories under the root that are never treated as stacks
+# (`*` is the only wildcard). The `updater` stack is always excluded.
+exclude: [authelia, updater, wud, "*.back", "*.bak-*"]
+
+stacks:
+  # The version lives in a variable: only that line of the file is rewritten.
+  mealie:
+    version: { file: .env, variable: VERSION }
+
+  # Named built-in procedure (only `authentik` in v1); requires `version`.
+  authentik:
+    recipe: authentik
+    version: { file: .env, variable: AUTHENTIK_TAG }
+
+  # Needs an explicit confirmation; `before` commands run in the stack
+  # directory first, and a non-zero exit fails the update.
+  sure:
+    confirm: true
+    before:
+      - docker compose exec -T db pg_dump -U sure sure > backups/sure-$(date +%F).sql
+
+  # Run `before` only on a major bump (always when the version is unknown).
+  downloads:
+    before:
+      - tar czf backups/seer-$(date +%F).tgz seer
+    beforeOnlyOnMajor: true
+
+  frigate: { confirm: true }
+
+  # Updated at the end of "Tout mettre à jour" (stacks that cut access to the portal).
+  traefik: { last: true }
+  cloudflared: { last: true }
+  portal: { last: true }

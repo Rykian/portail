@@ -12,7 +12,7 @@ export class BusyError extends Error {
 
 export type JobContext = { id: number; log: LogSink; setSteps(steps: JobStep[]): void };
 
-type Running = { id: number; listeners: Set<(event: JobEvent) => void>; steps: JobStep[] };
+type Running = { id: number; listeners: Set<(event: JobEvent) => void>; steps: JobStep[]; finished: boolean };
 
 export class JobRunner {
   private current: Running | null = null;
@@ -29,9 +29,14 @@ export class JobRunner {
   ): Job {
     if (this.current) throw new BusyError();
     const job = this.store.createJob({ ...input, startedAt: this.now().toISOString() });
-    const running: Running = { id: job.id, listeners: new Set(), steps: [] };
+    const running: Running = {
+      id: job.id,
+      listeners: new Set(),
+      steps: input.steps.map((step) => ({ ...step })),
+      finished: false,
+    };
     this.current = running;
-    void this.run(running, work);
+    this.run(running, work).catch((error) => console.error("job runner failed", error));
     return job;
   }
 
@@ -46,7 +51,12 @@ export class JobRunner {
 
   events(id: number): AsyncIterable<JobEvent> | null {
     if (!this.store.job(id)) return null;
-    return this.follow(id);
+    return { [Symbol.asyncIterator]: () => this.follow(id) };
+  }
+
+  /** Test-only: number of live subscribers of the running job. */
+  listenerCount(id: number): number {
+    return this.current?.id === id ? this.current.listeners.size : 0;
   }
 
   private emit(running: Running, event: JobEvent): void {
@@ -55,61 +65,82 @@ export class JobRunner {
 
   private async run(running: Running, work: (ctx: JobContext) => Promise<"success" | "failed">): Promise<void> {
     const log: LogSink = (line) => {
+      if (running.finished) return;
       this.store.appendLog(running.id, line);
       this.emit(running, { type: "log", line });
     };
     const setSteps = (steps: JobStep[]) => {
-      this.store.setSteps(running.id, steps);
+      if (running.finished) return;
+      const next = steps.map((step) => ({ ...step }));
+      this.store.setSteps(running.id, next);
       const previous = running.steps;
-      running.steps = steps;
-      steps.forEach((step, index) => {
+      running.steps = next;
+      next.forEach((step, index) => {
         if (!isDeepEqual(step, previous[index])) this.emit(running, { type: "step", step });
       });
     };
-    let status: JobStatus;
+    let status: JobStatus = "failed";
     try {
       status = await work({ id: running.id, log, setSteps });
     } catch (error) {
-      log(String(error instanceof Error ? error.message : error));
-      status = "failed";
+      try {
+        log(String(error instanceof Error ? error.message : error));
+      } catch (logError) {
+        console.error("job log failed", logError);
+      }
     }
     try {
       this.store.finishJob(running.id, status, this.now().toISOString());
     } finally {
+      running.finished = true;
       this.current = null;
       this.emit(running, { type: "end", status });
-      const waiters = this.idleWaiters.splice(0);
-      for (const resolve of waiters) resolve();
+      for (const resolve of this.idleWaiters.splice(0)) resolve();
     }
   }
 
-  private async *follow(id: number): AsyncGenerator<JobEvent> {
+  private follow(id: number): AsyncIterator<JobEvent> {
     // Snapshot and listener registration share one synchronous stretch: nothing is lost or doubled.
     const queue: JobEvent[] = this.store.jobLog(id).map((line) => ({ type: "log", line }));
     const job = this.store.job(id)!;
     queue.push(...job.steps.map((step): JobEvent => ({ type: "step", step })));
-    const running = this.current?.id === id ? this.current : null;
-    if (!running || job.status !== "running") queue.push({ type: "end", status: job.status });
+    const running = this.current?.id === id && job.status === "running" ? this.current : null;
+    if (!running) queue.push({ type: "end", status: job.status });
 
-    let wake: (() => void) | null = null;
+    let done = false;
+    let waiter: ((result: IteratorResult<JobEvent>) => void) | null = null;
+    const finish = () => {
+      done = true;
+      running?.listeners.delete(listener);
+    };
+    const pump = () => {
+      if (!waiter) return;
+      if (done) {
+        waiter({ value: undefined, done: true });
+        waiter = null;
+      } else if (queue.length > 0) {
+        const event = queue.shift()!;
+        if (event.type === "end") finish();
+        waiter({ value: event, done: false });
+        waiter = null;
+      }
+    };
     const listener = (event: JobEvent) => {
       queue.push(event);
-      wake?.();
+      pump();
     };
-    if (running && job.status === "running") running.listeners.add(listener);
-    try {
-      for (;;) {
-        const event = queue.shift();
-        if (!event) {
-          await new Promise<void>((resolve) => (wake = resolve));
-          wake = null;
-          continue;
-        }
-        yield event;
-        if (event.type === "end") return;
-      }
-    } finally {
-      running?.listeners.delete(listener);
-    }
+    running?.listeners.add(listener);
+    return {
+      next: () =>
+        new Promise((resolve) => {
+          waiter = resolve;
+          pump();
+        }),
+      return: () => {
+        finish();
+        pump();
+        return Promise.resolve({ value: undefined, done: true });
+      },
+    };
   }
 }

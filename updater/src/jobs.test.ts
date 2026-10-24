@@ -75,7 +75,7 @@ test("events replays then follows without duplicates", async () => {
   ]);
 });
 
-test("events called after a was logged replays a then follows", async () => {
+test("events subscribed after a, then b logged, gives exactly a, b, end", async () => {
   const { runner } = setup();
   const gate = deferred();
   const job = runner.start(input, async (ctx) => {
@@ -85,12 +85,68 @@ test("events called after a was logged replays a then follows", async () => {
     return "success";
   });
   const collected = collect(runner.events(job.id)!);
+  expect(runner.listenerCount(job.id)).toBe(1);
   gate.resolve();
   expect(await collected).toEqual([
     { type: "log", line: "a" },
     { type: "log", line: "b" },
     { type: "end", status: "success" },
   ]);
+  expect(runner.listenerCount(job.id)).toBe(0);
+});
+
+test("return() while next() is pending unsubscribes immediately", async () => {
+  const { runner } = setup();
+  const gate = deferred();
+  const job = runner.start(input, async () => {
+    await gate.promise;
+    return "success";
+  });
+  const it = runner.events(job.id)![Symbol.asyncIterator]();
+  const pending = it.next();
+  expect(runner.listenerCount(job.id)).toBe(1);
+  await it.return!();
+  expect(runner.listenerCount(job.id)).toBe(0);
+  expect((await pending).done).toBe(true);
+  gate.resolve();
+  await runner.idle();
+});
+
+function failingStore(method: "appendLog" | "finishJob") {
+  const store = new Store(new Database(":memory:"));
+  store[method] = () => {
+    throw new Error("disk full");
+  };
+  return store;
+}
+
+test.each(["appendLog", "finishJob"] as const)("store.%s throwing still ends the job cleanly", async (method) => {
+  const runner = new JobRunner(failingStore(method), () => new Date());
+  const job = runner.start(input, async (ctx) => {
+    ctx.log("x");
+    return "success";
+  });
+  const collected = collect(runner.events(job.id)!);
+  await runner.idle();
+  expect(runner.running()).toBeNull();
+  const events = await collected;
+  expect(events.at(-1)).toEqual({ type: "end", status: method === "appendLog" ? "failed" : "success" });
+  expect(() => runner.start(input, async () => "success")).not.toThrow();
+  await runner.idle();
+});
+
+test("log and setSteps after the job finished are ignored", async () => {
+  const { store, runner } = setup();
+  let ctx!: Parameters<Parameters<JobRunner["start"]>[1]>[0];
+  const job = runner.start(input, async (c) => {
+    ctx = c;
+    return "success";
+  });
+  await runner.idle();
+  ctx.log("late");
+  ctx.setSteps([{ stack: "s", status: "running", from: null, to: null }]);
+  expect(store.jobLog(job.id)).toEqual([]);
+  expect(store.job(job.id)?.steps).toEqual([]);
 });
 
 test("events on a finished job replays then ends", async () => {
@@ -128,6 +184,7 @@ test("setSteps emits only changed steps", async () => {
     { type: "step", step: s2 },
     { type: "step", step: { ...s1, status: "running" } },
   ]);
+  // initial steps are replayed once; the unchanged setSteps call emitted nothing extra
 });
 
 test("events for unknown id is null", () => {

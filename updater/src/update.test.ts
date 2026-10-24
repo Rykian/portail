@@ -131,6 +131,7 @@ test("a failing before command stops the update", async () => {
   );
   expect(result).toBe("failed");
   expect(docker.shellCalls).toEqual([{ dir, command: "false" }]);
+  expect(store.rollback("stirling")?.data).toMatchObject({ kind: "version", value: "v3.4.0" });
   expect(docker.composeCalls).toEqual([]);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("VERSION=v3.4.0\n");
 });
@@ -214,4 +215,63 @@ test("rollback recipe restores compose.yml and the variable", async () => {
 test("rollback without saved state fails", async () => {
   expect(await rollbackStack(await ctx())).toBe("failed");
   expect(logs).toContain("aucun état de retour arrière pour stirling");
+});
+
+test("a stopped container is not tagged", async () => {
+  docker.containersByProject.set("stirling", [{ ...running("app", "sha256:old"), state: "exited" }]);
+  await updateStack(await ctx());
+  expect(docker.tagCalls).toEqual([]);
+  expect(store.rollback("stirling")?.data).toEqual({ kind: "pull", services: [] });
+});
+
+test("pinned services are not tagged nor saved", async () => {
+  docker.services.set(dir, [
+    { name: "app", image: "stirling/app:latest", rawImage: "stirling/app:latest" },
+    { name: "db", image: "pg@sha256:abc", rawImage: "pg@sha256:abc" },
+  ]);
+  docker.containersByProject.set("stirling", [running("app", "sha256:old"), running("db", "sha256:db")]);
+  await updateStack(await ctx());
+  expect(docker.tagCalls.map((t) => t.target)).toEqual(["updater-rollback/stirling-app:latest"]);
+  expect(store.rollback("stirling")?.data).toEqual({
+    kind: "pull",
+    services: [{ service: "app", image: "stirling/app:latest" }],
+  });
+});
+
+test("scaled services are saved once", async () => {
+  docker.containersByProject.set("stirling", [running("app", "sha256:old"), running("app", "sha256:old")]);
+  await updateStack(await ctx());
+  expect(docker.tagCalls).toHaveLength(1);
+  expect(store.rollback("stirling")?.data).toEqual({
+    kind: "pull",
+    services: [{ service: "app", image: "stirling/app:latest" }],
+  });
+});
+
+test("version mode with no available version keeps the previous rollback", async () => {
+  await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
+  const previous = {
+    stack: "stirling",
+    to: "v3.3.0",
+    data: { kind: "version" as const, file: ".env", variable: "VERSION", value: "v3.3.0" },
+  };
+  store.saveRollback(previous);
+  const status = { ...versionStatus, available: null };
+  expect(await updateStack(await ctx({ config: versionConfig, status }))).toBe("failed");
+  expect(store.rollback("stirling")).toEqual(previous);
+});
+
+test("rollback fails when a broken container does not recover", async () => {
+  await updateStack(await ctx());
+  const restarting: ContainerState = { ...running("app", "sha256:new"), state: "restarting" };
+  docker.containersByProject.set("stirling", [restarting]);
+  const wait: StackContext["wait"] = async (read, before) => {
+    expect(before.map((c) => c.state)).toEqual(["running"]);
+    const after = await read();
+    return after.every((c) => c.state === "running") ? { ok: true } : { ok: false, problems: ["app : restarting"] };
+  };
+  docker.removeImageCalls = [];
+  expect(await rollbackStack(await ctx({ wait }))).toBe("failed");
+  expect(store.rollback("stirling")).not.toBeNull();
+  expect(docker.removeImageCalls).toEqual([]);
 });

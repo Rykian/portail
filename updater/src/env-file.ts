@@ -80,10 +80,16 @@ export async function writeVariableFile(path: string, name: string, value: strin
     const where = message.endsWith("absente") ? "de" : "dans";
     throw new Error(`${message} ${where} ${path}`, { cause: error });
   }
+  await writeFileAtomic(target, rewritten);
+}
+
+/** Replaces the content of an existing file via a temp file + rename, keeping its mode. */
+export async function writeFileAtomic(path: string, content: string): Promise<void> {
+  const target = await realpath(path);
   const { mode } = await stat(target);
   const tmp = `${target}.updater-tmp`;
   try {
-    await writeFile(tmp, rewritten, { mode });
+    await writeFile(tmp, content, { mode });
     await chmod(tmp, mode);
     await rename(tmp, target);
   } catch (error) {

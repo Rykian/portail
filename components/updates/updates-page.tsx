@@ -50,8 +50,11 @@ export function UpdatesPage() {
     setUnreachable(false);
   }, []);
 
+  // After a job: keep the list on screen if the updater does not answer.
   const reload = useCallback(() => {
-    api("stacks", stacksResponseSchema).then(show, () => setUnreachable(true));
+    api("stacks", stacksResponseSchema).then(show, () =>
+      setError("La liste n'a pas pu être actualisée : le service de mise à jour est injoignable."),
+    );
   }, [show]);
 
   useEffect(() => {

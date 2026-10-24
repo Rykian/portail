@@ -52,6 +52,18 @@ test("updating stirling shows the log once, then the history lists it", async ({
   await expect(dialog.getByRole("log")).toContainText("== docker compose pull");
 });
 
+test("a double click starts one update only", async ({ page }) => {
+  const posts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/updates/stacks/stirling/update")) {
+      posts.push(request.url());
+    }
+  });
+  await page.getByRole("button", { name: "Mettre à jour stirling" }).dblclick();
+  await expect(page.getByTestId("job-status")).toHaveText("réussie");
+  expect(posts).toHaveLength(1);
+});
+
 test("authentik asks for confirmation with the diff; cancelling starts nothing", async ({ page }) => {
   await page.getByRole("button", { name: "Mettre à jour authentik" }).click();
 

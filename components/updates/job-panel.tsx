@@ -66,6 +66,8 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
       source = current;
       current.onopen = () => {
         clearTimeout(timer);
+        // A drop during this replay must start polling again, not give up.
+        lastAttempt = false;
         setLog(EMPTY_LOG);
       };
       current.onerror = () => {

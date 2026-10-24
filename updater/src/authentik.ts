@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import { readFile } from "node:fs/promises";
 import { readVariableFile, writeFileAtomic, writeVariableFile } from "./env-file";
-import { fail, notNewerMessage, pullAndStart, runBeforeCommands, type StackContext } from "./update";
+import { fail, notNewerMessage, pullAndStart, runBeforeCommands, saveRollback, type StackContext } from "./update";
 import { compareVersions } from "./versions";
 
 type Preview =
@@ -71,23 +71,19 @@ export async function authentikMinorUpdate(
   ctx: StackContext,
   fetchFn: typeof fetch = globalThis.fetch,
 ): Promise<"success" | "failed"> {
-  const { stack, config, store, docker, log } = ctx;
+  const { stack, config, docker, log } = ctx;
   try {
     const version = config.version ?? fail("configuration de version absente");
     const plan = await prepare(ctx, fetchFn);
     if (!plan.ok) return fail(plan.error);
-    const before = await docker.containers(stack.name);
+    const before = await docker.containers(stack.dir);
 
-    store.saveRollback({
-      stack: stack.name,
-      to: plan.from,
-      data: {
-        kind: "recipe",
-        file: version.file,
-        variable: version.variable,
-        value: plan.from,
-        compose: plan.localCompose,
-      },
+    saveRollback(ctx, before, plan.from, {
+      kind: "recipe",
+      file: version.file,
+      variable: version.variable,
+      value: plan.from,
+      compose: plan.localCompose,
     });
     await runBeforeCommands(ctx);
 

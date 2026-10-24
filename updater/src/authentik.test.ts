@@ -72,7 +72,7 @@ beforeEach(async () => {
   logs = [];
   requested = [];
   statuses = {};
-  docker.containersByProject.set("authentik", [
+  docker.containersByDir.set(dir, [
     { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:old" },
   ]);
   await writeFile(join(dir, "compose.yml"), localCompose);
@@ -159,7 +159,7 @@ test("before command failure stops before any change", async () => {
 });
 
 test("a stopped stack gets the new compose.yml and version, is pulled and stays stopped", async () => {
-  docker.containersByProject.set("authentik", []);
+  docker.containersByDir.set(dir, []);
   expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("success");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");

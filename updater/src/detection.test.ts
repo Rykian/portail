@@ -271,10 +271,10 @@ test("rollback state is exposed", async () => {
   const status = await checkStack(
     stack,
     config(),
-    { stack: "rb", to: "v1", data: { kind: "pull", services: [] } },
+    { stack: "rb", to: "v1", major: false, running: true, data: { kind: "pull", services: [] } },
     deps,
   );
-  expect(status.rollback).toEqual({ to: "v1" });
+  expect(status.rollback).toEqual({ to: "v1", major: false });
 });
 
 test("checkAll saves statuses and lastCheck, surviving a failing stack", async () => {

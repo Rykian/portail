@@ -63,7 +63,7 @@ function stack(
     available: fields.available ?? null,
     major: false,
     needsConfirm: fields.needsConfirm ?? false,
-    rollback: fields.rollback ? { to: fields.rollback } : null,
+    rollback: fields.rollback ? { to: fields.rollback, major: false } : null,
     error: null,
     checkedAt: CHECKED_AT,
   };

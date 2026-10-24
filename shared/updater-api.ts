@@ -31,7 +31,7 @@ export const stackStatusSchema = z.object({
   available: z.string().nullable(),
   major: z.boolean(),
   needsConfirm: z.boolean(),
-  rollback: z.object({ to: z.string() }).nullable(),
+  rollback: z.object({ to: z.string(), major: z.boolean() }).nullable(),
   error: z.string().nullable(),
   checkedAt: z.string().nullable(),
 });

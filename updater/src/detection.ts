@@ -102,7 +102,7 @@ export async function checkStack(
     available: null,
     major: false,
     needsConfirm: config.confirm,
-    rollback: rollback ? { to: rollback.to } : null,
+    rollback: rollback ? { to: rollback.to, major: rollback.major } : null,
     error: null,
     checkedAt: deps.now().toISOString(),
   };

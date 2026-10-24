@@ -12,9 +12,9 @@ export function tempDir(): Promise<string> {
 export class FakeDocker implements Docker {
   /** composeServices result per stack dir; an Error is thrown. */
   services = new Map<string, ComposeService[] | Error>();
-  /** containers() result per project, used when containersSequence is exhausted. */
-  containersByProject = new Map<string, ContainerState[]>();
-  /** Successive containers() results, consumed one per call (any project). */
+  /** containers() result per stack dir, used when containersSequence is exhausted. */
+  containersByDir = new Map<string, ContainerState[]>();
+  /** Successive containers() results, consumed one per call (any stack). */
   containersSequence: ContainerState[][] = [];
   /** Local images by reference; missing = null. */
   images = new Map<string, LocalImage>();
@@ -38,8 +38,8 @@ export class FakeDocker implements Docker {
     return result;
   }
 
-  async containers(project: string): Promise<ContainerState[]> {
-    return this.containersSequence.shift() ?? this.containersByProject.get(project) ?? [];
+  async containers(dir: string): Promise<ContainerState[]> {
+    return this.containersSequence.shift() ?? this.containersByDir.get(dir) ?? [];
   }
 
   async image(ref: string): Promise<LocalImage | null> {

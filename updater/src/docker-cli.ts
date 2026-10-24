@@ -123,8 +123,9 @@ export function createDockerCli(): Docker {
       return parseComposeConfig(resolved, raw);
     },
 
-    async containers(project) {
-      const entries = parsePs(await captureOk(["compose", "-p", project, "ps", "-a", "--format", "json"]));
+    async containers(dir) {
+      // Run from the stack directory: compose finds the project name itself (top-level `name:`, normalisation).
+      const entries = parsePs(await captureOk(["compose", "ps", "-a", "--format", "json"], dir));
       if (entries.length === 0) return [];
       const ids = entries.map((entry) => entry.id);
       const images = parseImageIds(ids, await captureOk(["inspect", "--format", "{{.Image}}", ...ids]));

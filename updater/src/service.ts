@@ -158,7 +158,7 @@ export class UpdaterService {
   /** The `rollbacks` table is the source of truth: the stored status only holds the state of the last check. */
   private withRollback(status: StackStatus): StackStatus {
     const saved = this.deps.store.rollback(status.name);
-    return { ...status, rollback: saved ? { to: saved.to } : null };
+    return { ...status, rollback: saved ? { to: saved.to, major: saved.major } : null };
   }
 
   private detectionDeps(): DetectionDeps {

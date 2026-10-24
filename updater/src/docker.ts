@@ -25,7 +25,7 @@ export type LogSink = (line: string) => void;
 
 export interface Docker {
   composeServices(dir: string): Promise<ComposeService[]>;
-  containers(project: string): Promise<ContainerState[]>;
+  containers(dir: string): Promise<ContainerState[]>;
   image(ref: string): Promise<LocalImage | null>;
   compose(dir: string, args: string[], log: LogSink): Promise<number>;
   shell(dir: string, command: string, log: LogSink): Promise<number>;

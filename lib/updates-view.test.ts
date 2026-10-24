@@ -96,7 +96,7 @@ test("an error wins", () => {
 });
 
 test("a stack with a rollback and no update is not collapsed", () => {
-  expect(stackRow(stack({ rollback: { to: "v3.4.0" } }))).toEqual({ kind: "rollback-only" });
+  expect(stackRow(stack({ rollback: { to: "v3.4.0", major: false } }))).toEqual({ kind: "rollback-only" });
 });
 
 test("update-all counts only stacks it would update", () => {
@@ -111,9 +111,10 @@ test("update-all counts only stacks it would update", () => {
   expect(updateAllCount(stacks)).toBe(2);
 });
 
-test("the rollback warns about database migrations for confirm, recipe and major stacks only", () => {
+test("the rollback warns about database migrations for confirm, recipe and major updates only", () => {
   expect(rollbackWarning(stack())).toBeNull();
   expect(rollbackWarning(stack({ confirm: true }))).toBe(MIGRATION_WARNING);
   expect(rollbackWarning(stack({ recipe: "authentik" }))).toBe(MIGRATION_WARNING);
-  expect(rollbackWarning(stack({ major: true }))).toBe(MIGRATION_WARNING);
+  expect(rollbackWarning(stack({ rollback: { to: "v3.4.0", major: true } }))).toBe(MIGRATION_WARNING);
+  expect(rollbackWarning(stack({ major: true, rollback: { to: "v3.4.0", major: false } }))).toBeNull();
 });

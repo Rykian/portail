@@ -74,6 +74,8 @@ test("rollback round-trip", () => {
   const state: RollbackState = {
     stack: "web",
     to: "1.0",
+    major: false,
+    running: true,
     data: { kind: "version", file: ".env", variable: "V", value: "1.0" },
   };
   expect(store.rollback("web")).toBeNull();

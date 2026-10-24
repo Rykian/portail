@@ -4,6 +4,10 @@ import type { HistoryPage, Job, JobKind, JobStatus, JobStep, StackStatus } from 
 export type RollbackState = {
   stack: string;
   to: string;
+  /** The update was a major bump: the rollback confirmation warns about migrations. */
+  major: boolean;
+  /** The stack was running before the update: a rollback leaves a stopped stack stopped. */
+  running: boolean;
   data:
     | { kind: "pull"; services: { service: string; image: string }[] }
     | { kind: "version"; file: string; variable: string; value: string }

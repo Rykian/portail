@@ -213,7 +213,7 @@ test("rollback needs a rollback state, then restores and re-checks", async () =>
 
 test("a failed update exposes the rollback saved for it, and rollback() starts a job", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
-  docker.containersByProject.set("web", [
+  docker.containersByDir.set(join(root, "web"), [
     { service: "web", state: "running", exitCode: 0, health: null, imageId: "old" },
   ]);
   await check();
@@ -245,7 +245,7 @@ test("a version stack whose only change is a floating sidecar updates like pull 
   registry.tagsByRepository.set("acme/app", ["1.0.0"]);
   registry.digests.set("library/postgres:16-alpine", "sha256:new");
   docker.images.set(sidecar, { id: "old", repoDigests: ["postgres@sha256:old"], version: null, created: null });
-  docker.containersByProject.set("app", [
+  docker.containersByDir.set(join(root, "app"), [
     { service: "app", state: "running", exitCode: 0, health: null, imageId: "app" },
     { service: "db", state: "running", exitCode: 0, health: null, imageId: "old" },
   ]);

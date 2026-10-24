@@ -39,7 +39,7 @@ export async function runCompose({ stack, docker, log }: StackContext, args: str
 
 export async function checkHealth(ctx: StackContext, before: ContainerState[]): Promise<void> {
   ctx.log("== vérification de santé");
-  const result = await (ctx.wait ?? waitHealthy)(() => ctx.docker.containers(ctx.stack.name), before);
+  const result = await (ctx.wait ?? waitHealthy)(() => ctx.docker.containers(ctx.stack.dir), before);
   if (!result.ok) {
     for (const problem of result.problems) ctx.log(problem);
     fail("la vérification de santé a échoué");
@@ -49,15 +49,32 @@ export async function checkHealth(ctx: StackContext, before: ContainerState[]): 
 export const notNewerMessage = (target: string, value: string, file: string): string =>
   `la version ${target} n'est pas plus récente que ${value} déjà dans ${file} : mise à jour annulée`;
 
+/** A crash-looping container belongs to a running stack too. */
+const isUp = (container: ContainerState): boolean => container.state === "running" || container.state === "restarting";
+
+const isStackUp = (before: ContainerState[]): boolean => before.some(isUp);
+
+export function saveRollback(
+  { stack, status, store }: StackContext,
+  before: ContainerState[],
+  to: string,
+  data: RollbackState["data"],
+): void {
+  store.saveRollback({ stack: stack.name, to, major: status.major, running: isStackUp(before), data });
+}
+
 /** Pulls, then starts the stack and checks its health, unless nothing of it was running: a stopped stack stays stopped. */
 export async function pullAndStart(ctx: StackContext, before: ContainerState[]): Promise<void> {
   await runCompose(ctx, ["pull"]);
-  if (!before.some((container) => container.state === "running")) {
+  if (!isStackUp(before)) {
     ctx.log("pile arrêtée : images téléchargées, pile laissée arrêtée");
     return;
   }
   await runCompose(ctx, ["up", "-d"]);
-  await checkHealth(ctx, before);
+  await checkHealth(
+    ctx,
+    before.map((c) => (isUp(c) ? { ...c, state: "running" as const } : c)),
+  );
 }
 
 async function savePullRollback(
@@ -67,10 +84,7 @@ async function savePullRollback(
   to: string,
 ): Promise<void> {
   const { stack, docker, store } = ctx;
-  const candidates = uniqueBy(
-    before.filter((c) => c.state === "running"),
-    (c) => c.service,
-  ).flatMap((container) => {
+  const candidates = uniqueBy(before.filter(isUp), (c) => c.service).flatMap((container) => {
     const service = services.find((s) => s.name === container.service);
     // Docker refuses to tag an image onto a digest reference: pinned services cannot be rolled back.
     return service && !service.image.includes("@sha256:") ? [{ container, service }] : [];
@@ -88,7 +102,7 @@ async function savePullRollback(
       }
     }
   }
-  store.saveRollback({ stack: stack.name, to, data: { kind: "pull", services: saved } });
+  saveRollback(ctx, before, to, { kind: "pull", services: saved });
 }
 
 export async function runBeforeCommands(ctx: StackContext): Promise<void> {
@@ -105,10 +119,10 @@ export async function runBeforeCommands(ctx: StackContext): Promise<void> {
 }
 
 export async function updateStack(ctx: StackContext): Promise<Result> {
-  const { stack, config, status, docker, store, log } = ctx;
+  const { stack, config, status, docker, log } = ctx;
   try {
     const services = await docker.composeServices(stack.dir);
-    const before = await docker.containers(stack.name);
+    const before = await docker.containers(stack.dir);
     const versionFile = match(status.mode)
       .with("pull", () => null)
       .with("version", "recipe", () => config.version ?? fail("configuration de version absente"))
@@ -128,10 +142,11 @@ export async function updateStack(ctx: StackContext): Promise<Result> {
       const value = await readVariableFile(join(stack.dir, versionFile.file), versionFile.variable);
       if (value === null) fail(`variable ${versionFile.variable} absente de ${versionFile.file}`);
       if (compareVersions(target, value) <= 0) fail(notNewerMessage(target, value, versionFile.file));
-      store.saveRollback({
-        stack: stack.name,
-        to: value,
-        data: { kind: "version", file: versionFile.file, variable: versionFile.variable, value },
+      saveRollback(ctx, before, value, {
+        kind: "version",
+        file: versionFile.file,
+        variable: versionFile.variable,
+        value,
       });
     }
 
@@ -150,7 +165,8 @@ export async function updateStack(ctx: StackContext): Promise<Result> {
   }
 }
 
-async function restore(ctx: StackContext, state: RollbackState): Promise<void> {
+/** Puts back the saved images or files, then recreates the containers when `start`. */
+async function restore(ctx: StackContext, state: RollbackState, start: boolean): Promise<void> {
   const { stack, docker, log } = ctx;
   await match(state.data)
     .with({ kind: "pull" }, async (data) => {
@@ -158,19 +174,19 @@ async function restore(ctx: StackContext, state: RollbackState): Promise<void> {
         log(`== retour à l'image de ${saved.service}`);
         await docker.tag(rollbackTag(stack.name, saved.service), saved.image);
       }
-      await runCompose(ctx, ["up", "-d"]);
+      if (start) await runCompose(ctx, ["up", "-d"]);
     })
     .with({ kind: "version" }, async (data) => {
       log(`== ${data.variable}=${data.value}`);
       await writeVariableFile(join(stack.dir, data.file), data.variable, data.value);
-      await runCompose(ctx, ["up", "-d", "--pull", "missing"]);
+      if (start) await runCompose(ctx, ["up", "-d", "--pull", "missing"]);
     })
     .with({ kind: "recipe" }, async (data) => {
       log(`== restauration de ${stack.composeFile}`);
       await writeFileAtomic(join(stack.dir, stack.composeFile), data.compose);
       log(`== ${data.variable}=${data.value}`);
       await writeVariableFile(join(stack.dir, data.file), data.variable, data.value);
-      await runCompose(ctx, ["up", "-d", "--pull", "missing"]);
+      if (start) await runCompose(ctx, ["up", "-d", "--pull", "missing"]);
     })
     .exhaustive();
 }
@@ -181,13 +197,14 @@ export async function rollbackStack(ctx: StackContext): Promise<Result> {
     const state = store.rollback(stack.name);
     if (!state) return fail(`aucun état de retour arrière pour ${stack.name}`);
     // After a failed update, broken containers must come back too: treat them as expected to run.
-    const before = (await docker.containers(stack.name)).map((c) =>
+    const before = (await docker.containers(stack.dir)).map((c) =>
       c.state === "running" || c.state === "restarting" || (c.state === "exited" && c.exitCode !== 0)
         ? { ...c, state: "running" as const }
         : c,
     );
-    await restore(ctx, state);
-    await checkHealth(ctx, before);
+    await restore(ctx, state, state.running);
+    if (state.running) await checkHealth(ctx, before);
+    else log("pile arrêtée avant la mise à jour : retour arrière fait, pile laissée arrêtée");
     if (state.data.kind === "pull") {
       for (const saved of state.data.services) await docker.removeImage(rollbackTag(stack.name, saved.service));
     }

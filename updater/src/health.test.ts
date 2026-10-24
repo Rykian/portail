@@ -56,8 +56,24 @@ describe("evaluateHealth", () => {
     expect(result).toEqual({ ok: false, problems: ["app : absent"] });
   });
 
-  test("a service is ok when at least one of its containers is healthy", () => {
-    const after = [c("app", { state: "exited", exitCode: 1 }), c("app", { health: "healthy" })];
+  test("a service with one healthy and one exited 1 container fails", () => {
+    const after = [c("app", { health: "healthy" }), c("app", { state: "exited", exitCode: 1 })];
+    expect(evaluateHealth([c("app")], after)).toEqual({
+      ok: false,
+      problems: ["app : exited (1)"],
+    });
+  });
+
+  test("a service with one healthy and one restarting container fails on the restarting one", () => {
+    const after = [c("app", { health: "healthy" }), c("app", { state: "restarting" })];
+    expect(evaluateHealth([c("app")], after)).toEqual({
+      ok: false,
+      problems: ["app : restarting"],
+    });
+  });
+
+  test("two healthy replicas are ok", () => {
+    const after = [c("app", { health: "healthy" }), c("app", { health: "healthy" })];
     expect(evaluateHealth([c("app")], after)).toEqual({ ok: true });
   });
 
@@ -112,5 +128,68 @@ describe("waitHealthy", () => {
     expect(clock.now()).toBeGreaterThanOrEqual(60_000);
     expect(reads).toBeGreaterThanOrEqual(30);
     expect(reads).toBeLessThanOrEqual(32);
+  });
+
+  test("a read that throws once then healthy is ok", async () => {
+    const clock = fakeClock();
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      if (reads === 1) throw new Error("socket hang up");
+      return [c("app", { health: "healthy" })];
+    };
+
+    const result = await waitHealthy(read, [c("app")], { ...clock });
+
+    expect(result).toEqual({ ok: true });
+    expect(reads).toBe(2);
+  });
+
+  test("a read that always throws is not ok after the deadline", async () => {
+    const clock = fakeClock();
+    const read = async () => {
+      throw new Error("boom");
+    };
+
+    const result = await waitHealthy(read, [c("app")], { ...clock });
+
+    expect(result).toEqual({ ok: false, problems: ["docker : boom"] });
+    expect(clock.now()).toBeGreaterThanOrEqual(60_000);
+  });
+
+  test("timeoutMs override stops polling at that deadline", async () => {
+    const clock = fakeClock();
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      return [c("app", { health: "starting" })];
+    };
+
+    const result = await waitHealthy(read, [c("app")], { ...clock, timeoutMs: 10_000 });
+
+    expect(result).toEqual({ ok: false, problems: ["app : starting"] });
+    expect(reads).toBe(6);
+  });
+
+  test("intervalMs override is the sleep between reads", async () => {
+    const sleeps: number[] = [];
+    let t = 0;
+    let reads = 0;
+    const read = async () => {
+      reads++;
+      return [c("app", { health: reads < 3 ? "starting" : "healthy" })];
+    };
+
+    const result = await waitHealthy(read, [c("app")], {
+      now: () => t,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        t += ms;
+      },
+      intervalMs: 500,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(sleeps).toEqual([500, 500]);
   });
 });

@@ -40,11 +40,20 @@ export function evaluateHealth(before: ContainerState[], after: ContainerState[]
   const problems = services.flatMap((service) => {
     const containers = afterByService[service] ?? [];
     if (containers.length === 0) return [`${service} : absent`];
-    if (containers.some(isOk)) return [];
-    return [`${service} : ${label(containers[0])}`];
+    const firstFailing = containers.find((container) => !isOk(container));
+    return firstFailing ? [`${service} : ${label(firstFailing)}`] : [];
   });
 
   return problems.length === 0 ? { ok: true } : { ok: false, problems };
+}
+
+async function poll(read: () => Promise<ContainerState[]>, before: ContainerState[]): Promise<HealthResult> {
+  try {
+    return evaluateHealth(before, await read());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, problems: [`docker : ${message}`] };
+  }
 }
 
 export async function waitHealthy(
@@ -61,7 +70,7 @@ export async function waitHealthy(
 
   const start = now();
   for (;;) {
-    const result = evaluateHealth(before, await read());
+    const result = await poll(read, before);
     if (result.ok) return result;
     if (now() - start >= timeoutMs) return result;
     await sleep(intervalMs);

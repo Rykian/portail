@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { parseComposeConfig, parseImageInspect, parseImageIds, parsePs, pipeLines } from "./docker-cli";
+import { commandEnv, parseComposeConfig, parseImageInspect, parseImageIds, parsePs, pipeLines } from "./docker-cli";
 
 const resolved = JSON.stringify({
   name: "web",
@@ -91,4 +91,18 @@ test("pipeLines splits chunks into lines, flushing the last partial line", async
   const lines: string[] = [];
   await pipeLines(stream, (line) => lines.push(line));
   expect(lines).toEqual(["one", "two", "three"]);
+});
+
+test("commandEnv keeps only PATH, HOME and DOCKER_* so the updater's own variables don't reach compose", () => {
+  expect(
+    commandEnv({
+      PATH: "/usr/bin",
+      HOME: "/root",
+      DOCKER_HOST: "unix:///var/run/docker.sock",
+      PORT: "8080",
+      NODE_ENV: "production",
+      UPDATER_TOKEN: "secret",
+      UNSET: undefined,
+    }),
+  ).toEqual({ PATH: "/usr/bin", HOME: "/root", DOCKER_HOST: "unix:///var/run/docker.sock" });
 });

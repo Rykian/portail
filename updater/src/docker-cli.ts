@@ -89,8 +89,21 @@ export async function pipeLines(stream: ReadableStream<Uint8Array>, log: LogSink
   if (buffer !== "") log(buffer);
 }
 
+/**
+ * Children get a minimal environment: compose gives the process environment priority over a stack's .env,
+ * so the updater's own PORT=8080 would otherwise turn a stack's ${PORT:-3000} into 8080.
+ */
+export function commandEnv(env: Record<string, string | undefined>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && (entry[0] === "PATH" || entry[0] === "HOME" || entry[0].startsWith("DOCKER_")),
+    ),
+  );
+}
+
 async function capture(args: string[], cwd?: string): Promise<Captured> {
-  const proc = Bun.spawn(["docker", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(["docker", ...args], { cwd, env: commandEnv(process.env), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -108,7 +121,7 @@ async function captureOk(args: string[], cwd?: string): Promise<string> {
 }
 
 async function streamed(command: string[], cwd: string, log: LogSink): Promise<number> {
-  const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(command, { cwd, env: commandEnv(process.env), stdout: "pipe", stderr: "pipe" });
   await Promise.all([pipeLines(proc.stdout, log), pipeLines(proc.stderr, log)]);
   return proc.exited;
 }

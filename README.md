@@ -67,3 +67,5 @@ cd updater && bun install
 bun run test           # Vitest
 bun run typecheck
 ```
+
+Les tests de `shared/` tournent dans la suite racine (`npm test`), pas dans celle de l'updater.

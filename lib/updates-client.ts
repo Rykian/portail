@@ -27,5 +27,8 @@ export async function api<T>(
     const error = errorResponseSchema.safeParse(json);
     throw new ApiError(response.status, error.success ? error.data.error : `Erreur ${response.status}`);
   }
-  return schema.parse(json);
+  const parsed = schema.safeParse(json);
+  // Portal and updater out of step: the zod issues mean nothing to the user.
+  if (!parsed.success) throw new ApiError(response.status, "Réponse inattendue du service de mise à jour.");
+  return parsed.data;
 }

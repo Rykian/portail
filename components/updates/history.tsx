@@ -46,6 +46,7 @@ export function History() {
   const [next, setNext] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Job | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const fail = (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught));
 
@@ -57,10 +58,13 @@ export function History() {
   }, []);
 
   function more(cursor: number) {
-    api(`history?cursor=${cursor}`, historyPageSchema).then((page) => {
-      setJobs((current) => [...(current ?? []), ...page.jobs]);
-      setNext(page.nextCursor);
-    }, fail);
+    setLoadingMore(true);
+    api(`history?cursor=${cursor}`, historyPageSchema)
+      .then((page) => {
+        setJobs((current) => [...(current ?? []), ...page.jobs]);
+        setNext(page.nextCursor);
+      }, fail)
+      .finally(() => setLoadingMore(false));
   }
 
   return (
@@ -105,7 +109,7 @@ export function History() {
         </Table>
       )}
       {next !== null && (
-        <Button variant="outline" className="mt-3" onClick={() => more(next)}>
+        <Button variant="outline" className="mt-3" disabled={loadingMore} onClick={() => more(next)}>
           Plus
         </Button>
       )}

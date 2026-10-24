@@ -12,6 +12,9 @@ type Route = (request: IncomingMessage, url: URL, response: ServerResponse) => R
 let down = false;
 // Last `x-updater-user` seen on a POST, exposed at `GET /__last-user` for the e2e tests.
 let lastUser: string | null = null;
+// Number of upcoming `GET /jobs/1/events` that answer 502 (set with `POST /__fail-events?count=N`), to exercise the
+// log stream's recovery. Job 1 reports itself `running` meanwhile, like a job that outlives a portal restart.
+let eventFailures = 0;
 
 function service(
   name: string,
@@ -147,6 +150,13 @@ const stirlingEvents = [
   { type: "end", status: "success" },
 ];
 
+// Job 2 is the confirmed authentik update.
+const authentikEvents = [
+  { type: "log", line: "== docker compose pull" },
+  { type: "log", line: "authentik Pulled" },
+  { type: "end", status: "success" },
+];
+
 const AUTHENTIK_DIFF = `--- compose.yml (2026.8)
 +++ compose.yml (2026.10)
 -    image: ghcr.io/goauthentik/server:2026.8
@@ -162,22 +172,51 @@ const routes: Record<string, Route> = {
     stirlingStarted = true;
     return { status: 200, body: { jobId: 1 } };
   },
-  // Never started in the e2e run: the test cancels the confirmation.
-  "POST /stacks/authentik/update": () => {
+  // Job 3 streams something that is not JSON.
+  "POST /stacks/mealie/update": () => ({ status: 200, body: { jobId: 3 } }),
+  "GET /jobs/3/events": (_request, _url, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    response.write("data: not json\n\n");
+    return null;
+  },
+  // Like the real API: a stack that needs confirmation only starts when the body says `{ "confirm": true }`.
+  "POST /stacks/authentik/update": async (request) => {
+    const body = JSON.parse((await readBody(request)) || "{}");
+    if (body.confirm === true) return { status: 200, body: { jobId: 2 } };
     const warning = "Le retour arrière peut échouer : la sauvegarde vzdump reste le filet de sécurité.";
     return {
       status: 200,
       body: { needsConfirm: { from: "2026.8.4", to: "2026.10.2", diff: AUTHENTIK_DIFF, warning } },
     };
   },
+  "GET /jobs/1": () => ({
+    status: 200,
+    body: eventFailures > 0 ? { ...stirlingJob, status: "running", endedAt: null } : stirlingJob,
+  }),
   "GET /jobs/1/events": (_request, _url, response) => {
-    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
-    for (const event of stirlingEvents) response.write(`data: ${JSON.stringify(event)}\n\n`);
-    response.end();
-    return null;
+    if (eventFailures > 0) {
+      eventFailures--;
+      return { status: 502, body: { error: "bad gateway" } };
+    }
+    return stream(response, stirlingEvents);
   },
+  "GET /jobs/2/events": (_request, _url, response) => stream(response, authentikEvents),
   "GET /history": () => ({ status: 200, body: { jobs: stirlingStarted ? [stirlingJob] : [], nextCursor: null } }),
 };
+
+async function readBody(request: IncomingMessage): Promise<string> {
+  let body = "";
+  for await (const chunk of request) body += chunk;
+  return body;
+}
+
+// Streams the events then closes; answers on `response` itself, hence the null reply.
+function stream(response: ServerResponse, events: unknown[]): null {
+  response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+  for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`);
+  response.end();
+  return null;
+}
 
 function send(response: ServerResponse, { status, body }: Reply) {
   response.writeHead(status, { "content-type": "application/json" });
@@ -192,6 +231,10 @@ const server = createServer(async (request, response) => {
   if (key === "POST /__down") {
     down = true;
     return send(response, { status: 200, body: { down } });
+  }
+  if (key === "POST /__fail-events") {
+    eventFailures = Number(url.searchParams.get("count"));
+    return send(response, { status: 200, body: { eventFailures } });
   }
   if (key === "GET /__last-user") return send(response, { status: 200, body: { user: lastUser } });
   if (down) return send(response, { status: 503, body: { error: "down" } });

@@ -3,7 +3,8 @@
 import { useEffect, useEffectEvent, useState } from "react";
 import { match } from "ts-pattern";
 import { Button } from "@/components/ui/button";
-import { jobEventSchema, type JobStatus, type JobStep, type StackStatus } from "@/shared/updater-api";
+import { api } from "@/lib/updates-client";
+import { jobEventSchema, jobSchema, type JobStatus, type JobStep, type StackStatus } from "@/shared/updater-api";
 
 export type JobLog = { lines: string[]; steps: JobStep[]; status: JobStatus | null; lost: boolean };
 
@@ -25,40 +26,91 @@ function stepLabel(status: Exclude<JobStep["status"], "not-started">): string {
     .exhaustive();
 }
 
-/** Follows a job's SSE stream. The server replays from the start on every connection, then ends with `end`. */
+const EMPTY_LOG: JobLog = { lines: [], steps: [], status: null, lost: false };
+const POLL_MS = 3000;
+
+/**
+ * Follows a job's SSE stream. The server replays from the start on every connection, then ends with `end`.
+ * EventSource reconnects by itself while the connection drops (portal restart), but gives up for good when the
+ * server answers a non-200 (portal or proxy still starting): then the job is polled until the stream can be reopened.
+ */
 export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void): JobLog {
-  const [log, setLog] = useState<JobLog>({ lines: [], steps: [], status: null, lost: false });
+  const [log, setLog] = useState<JobLog>(EMPTY_LOG);
   const ended = useEffectEvent((status: JobStatus) => onEnd?.(status));
 
   useEffect(() => {
-    const source = new EventSource(`/api/updates/jobs/${jobId}/events`);
-    // EventSource reconnects by itself (e.g. while the portal restarts); each connection replays the whole job.
-    source.onopen = () => setLog({ lines: [], steps: [], status: null, lost: false });
-    source.onerror = () => {
-      if (source.readyState === EventSource.CLOSED) setLog((current) => ({ ...current, lost: true }));
+    let source: EventSource | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+    // Set when a poll finds the job finished: the next reopening replays the whole log and is the last attempt.
+    let lastAttempt = false;
+
+    function lose() {
+      setLog((current) => ({ ...current, lost: true }));
+    }
+
+    function poll() {
+      api(`jobs/${jobId}`, jobSchema).then(
+        (job) => {
+          if (job.status !== "running") lastAttempt = true;
+          if (!cancelled) connect();
+        },
+        // Unknown for now (updater restarting, 502, 404): try the stream again.
+        () => !cancelled && connect(),
+      );
+    }
+
+    function connect() {
+      source?.close();
+      const current = new EventSource(`/api/updates/jobs/${jobId}/events`);
+      source = current;
+      current.onopen = () => {
+        clearTimeout(timer);
+        setLog(EMPTY_LOG);
+      };
+      current.onerror = () => {
+        if (current.readyState !== EventSource.CLOSED) return;
+        lose();
+        if (!lastAttempt) timer = setTimeout(poll, POLL_MS);
+      };
+      current.onmessage = (message) => {
+        let data: unknown;
+        try {
+          data = JSON.parse(message.data);
+        } catch {
+          // Reconnecting would replay the same event: stop following instead.
+          current.close();
+          lose();
+          return;
+        }
+        const parsed = jobEventSchema.safeParse(data);
+        if (!parsed.success) return;
+        match(parsed.data)
+          .with({ type: "log" }, ({ line }) => setLog((state) => ({ ...state, lines: [...state.lines, line] })))
+          .with({ type: "step" }, ({ step }) =>
+            setLog((state) => ({
+              ...state,
+              steps: state.steps.some((s) => s.stack === step.stack)
+                ? state.steps.map((s) => (s.stack === step.stack ? step : s))
+                : [...state.steps, step],
+            })),
+          )
+          .with({ type: "end" }, ({ status }) => {
+            // Without close(), EventSource would reconnect and replay the job forever.
+            current.close();
+            setLog((state) => ({ ...state, status }));
+            ended(status);
+          })
+          .exhaustive();
+      };
+    }
+
+    connect();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      source?.close();
     };
-    source.onmessage = (message) => {
-      const parsed = jobEventSchema.safeParse(JSON.parse(message.data));
-      if (!parsed.success) return;
-      match(parsed.data)
-        .with({ type: "log" }, ({ line }) => setLog((current) => ({ ...current, lines: [...current.lines, line] })))
-        .with({ type: "step" }, ({ step }) =>
-          setLog((current) => ({
-            ...current,
-            steps: current.steps.some((s) => s.stack === step.stack)
-              ? current.steps.map((s) => (s.stack === step.stack ? step : s))
-              : [...current.steps, step],
-          })),
-        )
-        .with({ type: "end" }, ({ status }) => {
-          // Without close(), EventSource would reconnect and replay the job forever.
-          source.close();
-          setLog((current) => ({ ...current, status }));
-          ended(status);
-        })
-        .exhaustive();
-    };
-    return () => source.close();
   }, [jobId]);
 
   return log;
@@ -66,14 +118,17 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
 
 export function JobLines({ log }: { log: JobLog }) {
   return (
-    <pre
-      role="log"
-      aria-live="polite"
-      aria-label="Journal"
-      className="max-h-80 overflow-auto rounded-md bg-neutral-950 p-3 text-xs whitespace-pre-wrap text-neutral-100"
-    >
-      {log.lines.join("\n")}
-    </pre>
+    <>
+      <pre
+        role="log"
+        aria-live="polite"
+        aria-label="Journal"
+        className="max-h-80 overflow-auto rounded-md bg-neutral-950 p-3 text-xs whitespace-pre-wrap text-neutral-100"
+      >
+        {log.lines.join("\n")}
+      </pre>
+      {log.lost && <p className="mt-2 text-sm text-destructive">Journal indisponible.</p>}
+    </>
   );
 }
 
@@ -123,7 +178,6 @@ export function JobPanel({
         </ul>
       )}
       <JobLines log={log} />
-      {log.lost && <p className="mt-2 text-sm text-destructive">Journal indisponible.</p>}
       {rollback?.rollback && (
         <Button className="mt-3" variant="destructive" onClick={() => onRollback(rollback)}>
           Revenir à {rollback.rollback.to}

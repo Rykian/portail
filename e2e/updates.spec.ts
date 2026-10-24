@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, request }) => {
+  await request.post("http://localhost:3101/__fail-events?count=0");
   await page.goto("/admin/updates");
 });
 
@@ -40,7 +41,9 @@ test("updating stirling shows the log once, then the history lists it", async ({
   await expect(page.getByTestId("job-status")).toHaveText("réussie");
   expect((await log.textContent())!.split("stirling Pulled")).toHaveLength(2);
 
+  // The job panel does not belong to the « Mises à jour » tab: switching tabs keeps it.
   await page.getByRole("tab", { name: "Historique" }).click();
+  await expect(page.getByTestId("job-status")).toHaveText("réussie");
   const row = page.getByTestId("history-row").filter({ hasText: "stirling" });
   await expect(row).toContainText("réussie");
 
@@ -59,4 +62,52 @@ test("authentik asks for confirmation with the diff; cancelling starts nothing",
   await dialog.getByRole("button", { name: "Annuler" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("log")).toHaveCount(0);
+});
+
+test("authentik confirmed: the page sends the confirmation and the job runs", async ({ page }) => {
+  await page.getByRole("button", { name: "Mettre à jour authentik" }).click();
+  const dialog = page.getByRole("dialog", { name: "Mettre à jour authentik ?" });
+  await dialog.getByRole("button", { name: "Confirmer" }).click();
+
+  // The fake only starts job 2 when the POST body says `{ "confirm": true }`.
+  await expect(page.getByRole("heading", { name: "Tâche n° 2" })).toBeVisible();
+  await expect(page.getByRole("log")).toContainText("authentik Pulled");
+  await expect(page.getByTestId("job-status")).toHaveText("réussie");
+});
+
+test("the job log recovers when its stream answers 502, e.g. while the portal restarts", async ({ page, request }) => {
+  await request.post("http://localhost:3101/__fail-events?count=2");
+  await page.getByRole("button", { name: "Mettre à jour stirling" }).click();
+  await expect(page.getByText("Journal indisponible.")).toBeVisible();
+
+  // The page polls the job every 3 s: the first poll finds it running, the second finds it done.
+  await expect(page.getByTestId("job-status")).toHaveText("réussie", { timeout: 15_000 });
+  const log = page.getByRole("log");
+  await expect(log).toContainText("stirling Pulled");
+  expect((await log.textContent())!.split("stirling Pulled")).toHaveLength(2);
+  await expect(page.getByText("Journal indisponible.")).toHaveCount(0);
+});
+
+test("the history log dialog says when the log is unavailable, then recovers", async ({ page, request }) => {
+  await page.getByRole("button", { name: "Mettre à jour stirling" }).click();
+  await expect(page.getByTestId("job-status")).toHaveText("réussie");
+
+  await request.post("http://localhost:3101/__fail-events?count=1");
+  await page.getByRole("tab", { name: "Historique" }).click();
+  await page.getByTestId("history-row").filter({ hasText: "stirling" }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Journal indisponible.")).toBeVisible();
+  await expect(dialog.getByRole("log")).toContainText("== docker compose pull", { timeout: 15_000 });
+  await expect(dialog.getByText("Journal indisponible.")).toHaveCount(0);
+});
+
+test("an unreadable event ends the log instead of breaking the page", async ({ page }) => {
+  const errors: Error[] = [];
+  page.on("pageerror", (error) => errors.push(error));
+
+  await page.getByRole("button", { name: "Mettre à jour mealie" }).click();
+  await expect(page.getByText("Journal indisponible.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Fermer" })).toBeVisible();
+  expect(errors).toEqual([]);
 });

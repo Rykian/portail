@@ -42,6 +42,7 @@ export function UpdatesPage() {
   const [job, setJob] = useState<{ id: number; running: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [pending, setPending] = useState(false);
 
   const show = useCallback((response: StacksResponse) => {
     setData(response);
@@ -74,10 +75,13 @@ export function UpdatesPage() {
 
   async function run(action: () => Promise<void>) {
     setError(null);
+    setPending(true);
     try {
       await action();
     } catch (caught) {
       setError(message(caught));
+    } finally {
+      setPending(false);
     }
   }
 
@@ -116,7 +120,7 @@ export function UpdatesPage() {
   }
   if (!data) return <p className="text-muted-foreground">Chargement…</p>;
 
-  const busy = job?.running ?? false;
+  const busy = pending || (job?.running ?? false);
   const actions = { disabled: busy, onUpdate: update, onRollback: rollback };
 
   return (
@@ -125,6 +129,20 @@ export function UpdatesPage() {
         <TabsTrigger value="updates">Mises à jour</TabsTrigger>
         <TabsTrigger value="history">Historique</TabsTrigger>
       </TabsList>
+
+      {job && (
+        <JobPanel
+          key={job.id}
+          jobId={job.id}
+          stacks={data.stacks}
+          onEnd={() => {
+            setJob((current) => current && { ...current, running: false });
+            reload();
+          }}
+          onRollback={rollback}
+          onClose={() => setJob(null)}
+        />
+      )}
 
       <TabsContent value="updates" className="pt-4">
         <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -167,19 +185,6 @@ export function UpdatesPage() {
           <p role="alert" className="mb-4 text-sm text-destructive">
             {error}
           </p>
-        )}
-        {job && (
-          <JobPanel
-            key={job.id}
-            jobId={job.id}
-            stacks={data.stacks}
-            onEnd={() => {
-              setJob((current) => current && { ...current, running: false });
-              reload();
-            }}
-            onRollback={rollback}
-            onClose={() => setJob(null)}
-          />
         )}
 
         {view === "table" ? (

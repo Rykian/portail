@@ -23,20 +23,20 @@ type Result = "success" | "failed";
 
 class StepFailed extends Error {}
 
-function fail(message: string): never {
+export function fail(message: string): never {
   throw new StepFailed(message);
 }
 
 export const rollbackTag = (project: string, service: string): string =>
   `updater-rollback/${project}-${service}:latest`;
 
-async function runCompose({ stack, docker, log }: StackContext, args: string[]): Promise<void> {
+export async function runCompose({ stack, docker, log }: StackContext, args: string[]): Promise<void> {
   log(`== docker compose ${args.join(" ")}`);
   const code = await docker.compose(stack.dir, args, log);
   if (code !== 0) fail(`docker compose ${args.join(" ")} a échoué (code ${code})`);
 }
 
-async function checkHealth(ctx: StackContext, before: ContainerState[]): Promise<void> {
+export async function checkHealth(ctx: StackContext, before: ContainerState[]): Promise<void> {
   ctx.log("== vérification de santé");
   const result = await (ctx.wait ?? waitHealthy)(() => ctx.docker.containers(ctx.stack.name), before);
   if (!result.ok) {
@@ -76,6 +76,19 @@ async function savePullRollback(
   store.saveRollback({ stack: stack.name, to, data: { kind: "pull", services: saved } });
 }
 
+export async function runBeforeCommands(ctx: StackContext): Promise<void> {
+  const { stack, config, status, docker, log } = ctx;
+  const runBefore =
+    config.before.length > 0 &&
+    (!config.beforeOnlyOnMajor || status.major || status.current === null || status.available === null);
+  if (!runBefore) return;
+  for (const command of config.before) {
+    log(`== before: ${command}`);
+    const code = await docker.shell(stack.dir, command, log);
+    if (code !== 0) fail(`la commande before a échoué (code ${code}) : ${command}`);
+  }
+}
+
 export async function updateStack(ctx: StackContext): Promise<Result> {
   const { stack, config, status, docker, store, log } = ctx;
   try {
@@ -100,16 +113,7 @@ export async function updateStack(ctx: StackContext): Promise<Result> {
       });
     }
 
-    const runBefore =
-      config.before.length > 0 &&
-      (!config.beforeOnlyOnMajor || status.major || status.current === null || status.available === null);
-    if (runBefore) {
-      for (const command of config.before) {
-        log(`== before: ${command}`);
-        const code = await docker.shell(stack.dir, command, log);
-        if (code !== 0) fail(`la commande before a échoué (code ${code}) : ${command}`);
-      }
-    }
+    await runBeforeCommands(ctx);
 
     if (versionFile !== null && target !== null) {
       log(`== ${versionFile.variable}=${target}`);

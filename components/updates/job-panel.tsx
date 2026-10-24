@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "react";
 import { match } from "ts-pattern";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/updates-client";
@@ -119,9 +119,23 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
 }
 
 export function JobLines({ log }: { log: JobLog }) {
+  const ref = useRef<HTMLPreElement>(null);
+  // Follows new lines until the user scrolls up, and again once they scroll back to the bottom.
+  const following = useRef(true);
+
+  useLayoutEffect(() => {
+    const pre = ref.current;
+    if (pre && following.current) pre.scrollTop = pre.scrollHeight;
+  }, [log.lines]);
+
   return (
     <>
       <pre
+        ref={ref}
+        onScroll={(event) => {
+          const pre = event.currentTarget;
+          following.current = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8;
+        }}
         role="log"
         aria-live="polite"
         aria-label="Journal"

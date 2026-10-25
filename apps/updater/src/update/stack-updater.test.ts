@@ -40,6 +40,8 @@ const baseStatus: StackStatus = {
   major: false,
   needsConfirm: false,
   rollback: null,
+  selectable: false,
+  serviceRollbacks: [],
   error: null,
   checkedAt: null,
 };

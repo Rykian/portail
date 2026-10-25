@@ -30,6 +30,8 @@ const status: StackStatus = {
   major: false,
   needsConfirm: true,
   rollback: null,
+  selectable: false,
+  serviceRollbacks: [],
   error: null,
   checkedAt: null,
 };

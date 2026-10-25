@@ -18,6 +18,13 @@ export const serviceStatusSchema = z.object({
 });
 export type ServiceStatus = z.infer<typeof serviceStatusSchema>;
 
+export const serviceRollbackSchema = z.object({
+  service: z.string(),
+  to: z.string(),
+  major: z.boolean(),
+});
+export type ServiceRollback = z.infer<typeof serviceRollbackSchema>;
+
 export const stackStatusSchema = z.object({
   name: z.string(),
   mode: updateModeSchema,
@@ -32,23 +39,42 @@ export const stackStatusSchema = z.object({
   major: z.boolean(),
   needsConfirm: z.boolean(),
   rollback: z.object({ to: z.string(), major: z.boolean() }).nullable(),
+  selectable: z.boolean(),
+  serviceRollbacks: z.array(serviceRollbackSchema),
   error: z.string().nullable(),
   checkedAt: z.string().nullable(),
 });
 export type StackStatus = z.infer<typeof stackStatusSchema>;
+
+export const jobKindSchema = z.enum(["check", "update", "rollback", "update-all"]);
+export type JobKind = z.infer<typeof jobKindSchema>;
+
+/** A job's target: a stack, and the selected services (null = the whole stack). */
+export const jobTargetSchema = z.object({
+  stack: z.string(),
+  services: z.array(z.string()).nullable(),
+});
+export type JobTarget = z.infer<typeof jobTargetSchema>;
+
+export const pendingJobSchema = z.object({
+  id: z.number(),
+  kind: jobKindSchema,
+  status: z.enum(["queued", "running"]),
+  targets: z.array(jobTargetSchema),
+});
+export type PendingJob = z.infer<typeof pendingJobSchema>;
 
 export const stacksResponseSchema = z.object({
   stacks: z.array(stackStatusSchema),
   lastCheck: z.string().nullable(),
   configError: z.string().nullable(),
   runningJob: z.number().nullable(),
+  /** The running job first, then the queue in order. */
+  pendingJobs: z.array(pendingJobSchema),
 });
 export type StacksResponse = z.infer<typeof stacksResponseSchema>;
 
-export const jobKindSchema = z.enum(["check", "update", "rollback", "update-all"]);
-export type JobKind = z.infer<typeof jobKindSchema>;
-
-export const jobStatusSchema = z.enum(["running", "success", "failed", "interrupted"]);
+export const jobStatusSchema = z.enum(["queued", "running", "success", "failed", "interrupted"]);
 export type JobStatus = z.infer<typeof jobStatusSchema>;
 
 export const jobStepSchema = z.object({
@@ -56,6 +82,8 @@ export const jobStepSchema = z.object({
   status: z.enum(["pending", "running", "success", "failed", "not-started"]),
   from: z.string().nullable(),
   to: z.string().nullable(),
+  /** Targeted services of a selection; absent on old rows. */
+  services: z.array(z.string()).optional(),
 });
 export type JobStep = z.infer<typeof jobStepSchema>;
 
@@ -70,9 +98,20 @@ export const jobSchema = z.object({
 });
 export type Job = z.infer<typeof jobSchema>;
 
+export const imageProgressSchema = z.object({
+  stack: z.string(),
+  service: z.string(),
+  image: z.string(),
+  downloaded: z.number(),
+  total: z.number(),
+  state: z.enum(["downloading", "done", "up-to-date"]),
+});
+export type ImageProgress = z.infer<typeof imageProgressSchema>;
+
 export const jobEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("log"), line: z.string() }),
   z.object({ type: z.literal("step"), step: jobStepSchema }),
+  z.object({ type: z.literal("progress"), progress: imageProgressSchema }),
   z.object({ type: z.literal("end"), status: jobStatusSchema }),
 ]);
 export type JobEvent = z.infer<typeof jobEventSchema>;
@@ -86,9 +125,13 @@ export type HistoryPage = z.infer<typeof historyPageSchema>;
 export const updateBodySchema = z
   .object({
     confirm: z.literal(true).optional(),
+    services: z.array(z.string()).optional(),
   })
   .strict();
 export type UpdateBody = z.infer<typeof updateBodySchema>;
+
+export const rollbackBodySchema = z.object({ service: z.string().optional() }).strict();
+export type RollbackBody = z.infer<typeof rollbackBodySchema>;
 
 export const startResponseSchema = z.object({ jobId: z.number() });
 export type StartResponse = z.infer<typeof startResponseSchema>;

@@ -31,6 +31,8 @@ function stack(fields: Partial<StackStatus> = {}): StackStatus {
     major: false,
     needsConfirm: false,
     rollback: null,
+    selectable: false,
+    serviceRollbacks: [],
     error: null,
     checkedAt: null,
     ...fields,

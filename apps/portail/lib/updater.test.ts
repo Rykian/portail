@@ -16,6 +16,8 @@ function stack(name: string, update: boolean) {
     major: false,
     needsConfirm: false,
     rollback: null,
+    selectable: false,
+    serviceRollbacks: [],
     error: null,
     checkedAt: null,
   };
@@ -26,6 +28,7 @@ const body = {
   lastCheck: null,
   configError: null,
   runningJob: null,
+  pendingJobs: [],
 };
 
 beforeEach(() => {

@@ -65,6 +65,7 @@ export class DetectionService {
       lastCheck: this.statuses.getMeta("lastCheck"),
       configError: this.statuses.getMeta("configError"),
       runningJob: this.jobs.running(),
+      pendingJobs: [],
     };
   }
 
@@ -121,6 +122,8 @@ export class DetectionService {
       major: false,
       needsConfirm: config.confirm,
       rollback: rollback ? { to: rollback.to, major: rollback.major } : null,
+      selectable: false,
+      serviceRollbacks: [],
       error: null,
       checkedAt: this.now().toISOString(),
     };

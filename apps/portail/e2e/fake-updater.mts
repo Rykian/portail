@@ -64,6 +64,8 @@ function stack(
     major: false,
     needsConfirm: fields.needsConfirm ?? false,
     rollback: fields.rollback ? { to: fields.rollback, major: false } : null,
+    selectable: false,
+    serviceRollbacks: [],
     error: null,
     checkedAt: CHECKED_AT,
   };
@@ -167,7 +169,7 @@ const AUTHENTIK_DIFF = `--- compose.yml (2026.8)
 const routes: Record<string, Route> = {
   "GET /stacks": () => ({
     status: 200,
-    body: { stacks, lastCheck: CHECKED_AT, configError: null, runningJob: null },
+    body: { stacks, lastCheck: CHECKED_AT, configError: null, runningJob: null, pendingJobs: [] },
   }),
   "POST /checks": () => ({ status: 200, body: { jobId: 1 } }),
   "POST /stacks/stirling/update": () => {

@@ -27,7 +27,7 @@ const events: JobEvent[] = [
 ];
 
 const stub = {
-  stacks: () => ({ stacks: [], lastCheck: null, configError: null, runningJob: null }),
+  stacks: () => ({ stacks: [], lastCheck: null, configError: null, runningJob: null, pendingJobs: [] }),
   update: (...args: unknown[]) => {
     calls.push(["update", ...args]);
     return updateImpl();

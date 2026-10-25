@@ -10,6 +10,7 @@ export type JobLog = { lines: string[]; steps: JobStep[]; status: JobStatus | nu
 
 export function statusLabel(status: JobStatus): string {
   return match(status)
+    .with("queued", () => "en attente")
     .with("running", () => "en cours")
     .with("success", () => "réussie")
     .with("failed", () => "échouée")
@@ -97,6 +98,8 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
                 : [...state.steps, step],
             })),
           )
+          // Download progress is rendered by a later change; nothing to keep in the log yet.
+          .with({ type: "progress" }, () => {})
           .with({ type: "end" }, ({ status }) => {
             // Without close(), EventSource would reconnect and replay the job forever.
             current.close();

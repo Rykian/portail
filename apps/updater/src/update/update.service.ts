@@ -68,8 +68,9 @@ export class UpdateService {
     }
 
     const step: JobStep = { stack: name, status: "pending", from: status.current, to: status.available };
-    const job = this.jobs.start({ kind: "update", user, steps: [step] }, (job) =>
-      this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log)),
+    const job = this.jobs.start(
+      { kind: "update", user, steps: [step], targets: [{ stack: name, services: null }] },
+      (job) => this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log)),
     );
     return { jobId: job.id };
   }
@@ -79,8 +80,9 @@ export class UpdateService {
     const saved = this.rollbacks.get(name);
     if (!saved) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
     const step: JobStep = { stack: name, status: "pending", from: status.current, to: saved.to };
-    return this.jobs.start({ kind: "rollback", user, steps: [step] }, (ctx) =>
-      this.singleStep(ctx.setSteps, step, () => this.runRollback(name, ctx.log)),
+    return this.jobs.start(
+      { kind: "rollback", user, steps: [step], targets: [{ stack: name, services: null }] },
+      (ctx) => this.singleStep(ctx.setSteps, step, () => this.runRollback(name, ctx.log)),
     );
   }
 
@@ -92,7 +94,8 @@ export class UpdateService {
       const status = statuses.find((s) => s.name === name);
       return { stack: name, status: "pending", from: status?.current ?? null, to: status?.available ?? null };
     });
-    return this.jobs.start({ kind: "update-all", user, steps }, (ctx) =>
+    const targets = queue.map((stack) => ({ stack, services: null }));
+    return this.jobs.start({ kind: "update-all", user, steps, targets }, (ctx) =>
       runUpdateAll(queue, (name, log) => this.runUpdate(name, log), ctx, steps),
     );
   }

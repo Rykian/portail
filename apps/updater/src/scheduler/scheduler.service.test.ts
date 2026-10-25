@@ -55,7 +55,18 @@ test("skips the start-up check when the last one is recent", () => {
 test("skips a scheduled check while a job runs", () => {
   lastCheck = new Date(START).toISOString();
   scheduler.start();
-  jobs.start({ kind: "update", user: null, steps: [] }, () => new Promise(() => {}));
+  jobs.start({ kind: "update", user: null, steps: [], targets: [] }, () => new Promise(() => {}));
+  vi.advanceTimersByTime(6 * HOUR);
+  expect(check).not.toHaveBeenCalled();
+  scheduler.stop();
+});
+
+test("the scheduled check skips while a job is queued", () => {
+  lastCheck = new Date(START).toISOString();
+  scheduler.start();
+  // Only busy() reports the queued job: running() alone would let the check through.
+  vi.spyOn(jobs, "running").mockReturnValue(null);
+  vi.spyOn(jobs, "busy").mockReturnValue(true);
   vi.advanceTimersByTime(6 * HOUR);
   expect(check).not.toHaveBeenCalled();
   scheduler.stop();

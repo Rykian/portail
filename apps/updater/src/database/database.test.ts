@@ -45,6 +45,7 @@ test("reopening an existing file keeps its rows", async () => {
     user: "a@b.c",
     steps: [],
     startedAt: "2026-10-24T10:00:00.000Z",
+    status: "running",
   });
   new RollbackStore(first).save({
     stack: "web",

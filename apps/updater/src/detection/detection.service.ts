@@ -65,13 +65,13 @@ export class DetectionService {
       lastCheck: this.statuses.getMeta("lastCheck"),
       configError: this.statuses.getMeta("configError"),
       runningJob: this.jobs.running(),
-      pendingJobs: [],
+      pendingJobs: this.jobs.pending(),
     };
   }
 
   /** Starts a check job: reloads the config, then checks every stack. */
   check(user: string | null): Job {
-    return this.jobs.start({ kind: "check", user, steps: [] }, async ({ log }) => {
+    return this.jobs.start({ kind: "check", user, steps: [], targets: [] }, async ({ log }) => {
       const { config, error } = await this.config.load();
       this.statuses.setMeta("configError", error);
       if (error !== null) log(`configuration invalide, la précédente est utilisée : ${error}`);

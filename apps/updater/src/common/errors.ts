@@ -12,4 +12,11 @@ export class BadRequestError extends Error {
   }
 }
 
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
 export const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));

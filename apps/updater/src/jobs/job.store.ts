@@ -27,21 +27,30 @@ const toJob = (row: JobRow): Job => ({
 export class JobStore {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
 
-  createJob(input: { kind: JobKind; user: string | null; steps: JobStep[]; startedAt: string }): Job {
+  /** A queued job's `startedAt` is its queue time until `markStarted`. */
+  createJob(input: {
+    kind: JobKind;
+    user: string | null;
+    steps: JobStep[];
+    startedAt: string;
+    status: "queued" | "running";
+  }): Job {
     const result = this.db
-      .query(
-        "INSERT INTO jobs (kind, user, started_at, ended_at, status, steps_json) VALUES (?, ?, ?, NULL, 'running', ?)",
-      )
-      .run(input.kind, input.user, input.startedAt, JSON.stringify(input.steps));
+      .query("INSERT INTO jobs (kind, user, started_at, ended_at, status, steps_json) VALUES (?, ?, ?, NULL, ?, ?)")
+      .run(input.kind, input.user, input.startedAt, input.status, JSON.stringify(input.steps));
     return {
       id: Number(result.lastInsertRowid),
       kind: input.kind,
       user: input.user,
       startedAt: input.startedAt,
       endedAt: null,
-      status: "running",
+      status: input.status,
       steps: input.steps,
     };
+  }
+
+  markStarted(id: number, startedAt: string): void {
+    this.db.query("UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?").run(startedAt, id);
   }
 
   appendLog(id: number, line: string): void {
@@ -81,7 +90,7 @@ export class JobStore {
 
   markInterrupted(endedAt: string): number {
     const result = this.db
-      .query("UPDATE jobs SET status = 'interrupted', ended_at = ? WHERE status = 'running'")
+      .query("UPDATE jobs SET status = 'interrupted', ended_at = ? WHERE status IN ('queued', 'running')")
       .run(endedAt);
     return result.changes;
   }

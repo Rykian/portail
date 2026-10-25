@@ -21,6 +21,7 @@ test("start-up marks interrupted jobs before the scheduler's first check; close 
     user: null,
     steps: [],
     startedAt: "2026-10-24T09:00:00.000Z",
+    status: "running",
   });
   const root = await tempDir();
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});

@@ -2,9 +2,9 @@ import "reflect-metadata";
 import type { INestApplication } from "@nestjs/common";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { stacksResponseSchema, type JobEvent } from "@portail/shared/updater-api";
-import { NotFoundError } from "./common/errors";
+import { ConflictError, NotFoundError } from "./common/errors";
 import { DetectionService } from "./detection/detection.service";
-import { BusyError, JobRunner } from "./jobs/job-runner";
+import { JobRunner } from "./jobs/job-runner";
 import { JobStore } from "./jobs/job.store";
 import { SchedulerService } from "./scheduler/scheduler.service";
 import { testModuleBuilder } from "./test/module";
@@ -135,11 +135,11 @@ test("POST update maps errors and passes the user", async () => {
   expect(calls).toEqual([["update", "x", {}, "a@b.c"]]);
 
   updateImpl = async () => {
-    throw new BusyError();
+    throw new ConflictError("Une tâche est déjà prévue pour x, attends qu'elle se termine");
   };
-  const busy = await fetch(`${base}/stacks/x/update`, { method: "POST", headers: auth });
-  expect(busy.status).toBe(409);
-  expect(await busy.json()).toEqual({ error: "Une tâche est déjà en cours" });
+  const conflict = await fetch(`${base}/stacks/x/update`, { method: "POST", headers: auth });
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toEqual({ error: "Une tâche est déjà prévue pour x, attends qu'elle se termine" });
   expect(calls[1]).toEqual(["update", "x", {}, null]);
 
   updateImpl = async () => {

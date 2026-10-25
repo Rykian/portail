@@ -31,7 +31,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   /** Checks every 6 h (and at start-up when the last check is older), purges old logs daily. */
   start(): void {
     const check = () => {
-      if (this.jobs.running() !== null) return;
+      if (this.jobs.busy()) return;
       try {
         this.detection.check(null);
       } catch (error) {

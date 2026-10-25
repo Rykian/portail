@@ -6,7 +6,13 @@ function setup() {
   return new JobStore(openDatabase(":memory:"));
 }
 
-const input = (startedAt: string) => ({ kind: "update" as const, user: "me", steps: [], startedAt });
+const input = (startedAt: string) => ({
+  kind: "update" as const,
+  user: "me",
+  steps: [],
+  startedAt,
+  status: "running" as const,
+});
 
 test("create, append logs in order, finish", () => {
   const store = setup();
@@ -43,14 +49,25 @@ test("history leaves out check jobs, which stay reachable by id", () => {
   expect(store.job(check.id)).toMatchObject({ kind: "check" });
 });
 
-test("markInterrupted only touches running jobs", () => {
+test("markInterrupted marks queued and running jobs", () => {
   const store = setup();
   const a = store.createJob(input("2026-01-01T00:00:00.000Z"));
   const b = store.createJob(input("2026-01-02T00:00:00.000Z"));
+  const c = store.createJob({ ...input("2026-01-02T00:00:00.000Z"), status: "queued" });
   store.finishJob(b.id, "success", "2026-01-02T00:01:00.000Z");
-  expect(store.markInterrupted("2026-01-03T00:00:00.000Z")).toBe(1);
+  expect(store.markInterrupted("2026-01-03T00:00:00.000Z")).toBe(2);
   expect(store.job(a.id)).toMatchObject({ status: "interrupted", endedAt: "2026-01-03T00:00:00.000Z" });
+  expect(store.job(c.id)).toMatchObject({ status: "interrupted", endedAt: "2026-01-03T00:00:00.000Z" });
   expect(store.job(b.id)?.status).toBe("success");
+});
+
+test("a queued job keeps its queue time until markStarted", () => {
+  const store = setup();
+  const job = store.createJob({ ...input("2026-01-01T00:00:00.000Z"), status: "queued" });
+  expect(job.status).toBe("queued");
+  expect(store.job(job.id)).toMatchObject({ status: "queued", startedAt: "2026-01-01T00:00:00.000Z" });
+  store.markStarted(job.id, "2026-01-01T00:05:00.000Z");
+  expect(store.job(job.id)).toMatchObject({ status: "running", startedAt: "2026-01-01T00:05:00.000Z" });
 });
 
 test("purgeLogs removes only old finished logs, keeps rows", () => {

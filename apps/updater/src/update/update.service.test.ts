@@ -7,7 +7,7 @@ import { BadRequestError, NotFoundError } from "../common/errors";
 import { openDatabase } from "../database/database";
 import { DetectionService } from "../detection/detection.service";
 import type { ComposeService } from "../docker/docker";
-import { BusyError, JobRunner } from "../jobs/job-runner";
+import { JobRunner } from "../jobs/job-runner";
 import { JobStore } from "../jobs/job.store";
 import { RollbackStore } from "../stacks/rollback.store";
 import { FakeDocker, FakeRegistry, tempDir } from "../test/fakes";
@@ -186,7 +186,7 @@ test("Authentik preview network error is a bad request", async () => {
   await expect(failing.update("authentik", {}, null)).rejects.toThrow(new BadRequestError("réseau indisponible"));
 });
 
-test("update without button, unknown stack, busy", async () => {
+test("update without button, unknown stack, queued behind a running job", async () => {
   await makeStack("lit", [{ name: "db", image: "postgres:16.1.0", rawImage: "postgres:16.1.0" }]);
   registry.tagsByRepository.set("library/postgres", ["16.1.0", "16.2.0"]);
   await check();
@@ -198,12 +198,15 @@ test("update without button, unknown stack, busy", async () => {
   await check();
   let release = () => {};
   jobs.start(
-    { kind: "check", user: null, steps: [] },
+    { kind: "check", user: null, steps: [], targets: [] },
     () => new Promise((resolve) => (release = () => resolve("success"))),
   );
-  await expect(service.update("web", {}, null)).rejects.toBeInstanceOf(BusyError);
+  const queued = await service.update("web", {}, null);
+  if (!("jobId" in queued)) throw new Error("expected a job");
+  expect(jobStore.job(queued.jobId)?.status).toBe("queued");
   release();
   await jobs.idle();
+  expect(jobStore.job(queued.jobId)?.status).toBe("success");
 });
 
 test("rollback needs a rollback state, then restores and re-checks", async () => {

@@ -1,0 +1,3 @@
+[install]
+# Predictable node_modules for Next tracing and the Docker stages.
+linker = "hoisted"

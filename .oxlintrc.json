@@ -3,5 +3,5 @@
   "plugins": ["typescript", "unicorn", "oxc", "react", "nextjs", "jsx-a11y", "import"],
   "categories": { "correctness": "error" },
   "env": { "browser": true, "node": true },
-  "ignorePatterns": [".next/**", "out/**", "build/**", "next-env.d.ts"]
+  "ignorePatterns": ["**/.next/**", "**/out/**", "**/build/**", "**/next-env.d.ts"]
 }

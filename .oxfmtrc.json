@@ -1,5 +1,5 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 120,
-  "ignorePatterns": ["docs/**", "bun.lock", "updater/bun.lock", ".superpowers/**"]
+  "ignorePatterns": ["docs/**", "bun.lock", ".superpowers/**"]
 }

@@ -4,6 +4,10 @@ export type ComposeService = {
   image: string;
   /** Image as written in the compose file (`--no-interpolate`). */
   rawImage: string;
+  /** `pull_policy` of the service; `build` and `never` mean compose does not download it. */
+  pullPolicy: string | null;
+  /** `platform` of the service, passed to the download. */
+  platform: string | null;
 };
 
 export type ContainerState = {

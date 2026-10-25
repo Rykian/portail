@@ -53,7 +53,7 @@ describe("floating", () => {
   const ref = "lscr.io/linuxserver/x:latest";
   async function setup() {
     const stack = await makeStack("x");
-    docker.services.set(stack.dir, [{ name: "web", image: ref, rawImage: ref }]);
+    docker.services.set(stack.dir, [{ name: "web", image: ref, rawImage: ref, pullPolicy: null, platform: null }]);
     return stack;
   }
 
@@ -122,7 +122,15 @@ describe("version variable", () => {
   const raw = "ghcr.io/mealie-recipes/mealie:${VERSION}";
   async function setup(tags: string[]) {
     const stack = await makeStack("mealie", "VERSION=v3.4.0\n");
-    docker.services.set(stack.dir, [{ name: "mealie", image: "ghcr.io/mealie-recipes/mealie:v3.4.0", rawImage: raw }]);
+    docker.services.set(stack.dir, [
+      {
+        name: "mealie",
+        image: "ghcr.io/mealie-recipes/mealie:v3.4.0",
+        rawImage: raw,
+        pullPolicy: null,
+        platform: null,
+      },
+    ]);
     registry.tagsByRepository.set("mealie-recipes/mealie", tags);
     return stack;
   }
@@ -160,7 +168,9 @@ describe("version variable", () => {
 
 test("variable service error becomes a stack error", async () => {
   const stack = await makeStack("mealie", "VERSION=v3.4.0\n");
-  docker.services.set(stack.dir, [{ name: "m", image: "ghcr.io/o/m:v3.4.0", rawImage: "ghcr.io/o/m:${VERSION}" }]);
+  docker.services.set(stack.dir, [
+    { name: "m", image: "ghcr.io/o/m:v3.4.0", rawImage: "ghcr.io/o/m:${VERSION}", pullPolicy: null, platform: null },
+  ]);
   registry.errors.set("o/m", new Error("Registry responded 429"));
   const status = await detection.checkStack(stack, versionConfig());
   expect(status).toMatchObject({ error: "Registry responded 429", button: false });
@@ -178,9 +188,9 @@ test("unreadable version file becomes a stack error", async () => {
 test("variable kind matches ${VAR} and ${VAR:-x} but not a longer name", async () => {
   const stack = await makeStack("kinds", "VERSION=v1.0.0\n");
   docker.services.set(stack.dir, [
-    { name: "a", image: "o/a:v1.0.0", rawImage: "o/a:${VERSION}" },
-    { name: "b", image: "o/b:v1.0.0", rawImage: "o/b:${VERSION:-x}" },
-    { name: "c", image: "o/c:v1.0.0", rawImage: "o/c:${VERSION_SUFFIX}" },
+    { name: "a", image: "o/a:v1.0.0", rawImage: "o/a:${VERSION}", pullPolicy: null, platform: null },
+    { name: "b", image: "o/b:v1.0.0", rawImage: "o/b:${VERSION:-x}", pullPolicy: null, platform: null },
+    { name: "c", image: "o/c:v1.0.0", rawImage: "o/c:${VERSION_SUFFIX}", pullPolicy: null, platform: null },
   ]);
   const status = await detection.checkStack(stack, versionConfig());
   expect(status.services.map((s) => s.kind)).toEqual(["variable", "variable", "literal"]);
@@ -188,7 +198,9 @@ test("variable kind matches ${VAR} and ${VAR:-x} but not a longer name", async (
 
 test("Docker Hub library image compares digests", async () => {
   const stack = await makeStack("hub");
-  docker.services.set(stack.dir, [{ name: "n", image: "nginx:latest", rawImage: "nginx:latest" }]);
+  docker.services.set(stack.dir, [
+    { name: "n", image: "nginx:latest", rawImage: "nginx:latest", pullPolicy: null, platform: null },
+  ]);
   docker.images.set("nginx:latest", { id: "i", repoDigests: ["nginx@sha256:aaa"], version: null, created: null });
   registry.digests.set("library/nginx:latest", "sha256:aaa");
   expect((await detection.checkStack(stack, config())).services[0]?.update).toBe(false);
@@ -198,7 +210,9 @@ test("Docker Hub library image compares digests", async () => {
 
 test("literal version has an update but no button", async () => {
   const stack = await makeStack("gate");
-  docker.services.set(stack.dir, [{ name: "gate", image: "nginx:1.31.6-alpine", rawImage: "nginx:1.31.6-alpine" }]);
+  docker.services.set(stack.dir, [
+    { name: "gate", image: "nginx:1.31.6-alpine", rawImage: "nginx:1.31.6-alpine", pullPolicy: null, platform: null },
+  ]);
   registry.tagsByRepository.set("library/nginx", ["1.31.6-alpine", "1.31.7-alpine"]);
   const status = await detection.checkStack(stack, config());
   expect(status.services[0]).toMatchObject({
@@ -214,7 +228,7 @@ test("literal version has an update but no button", async () => {
 test("pinned digest is never checked", async () => {
   const stack = await makeStack("pin");
   const image = "ghcr.io/o/x@sha256:abc";
-  docker.services.set(stack.dir, [{ name: "x", image, rawImage: image }]);
+  docker.services.set(stack.dir, [{ name: "x", image, rawImage: image, pullPolicy: null, platform: null }]);
   const status = await detection.checkStack(stack, config());
   expect(status.services[0]).toMatchObject({ kind: "pinned", update: false });
   expect(registry.calls).toEqual([]);
@@ -226,7 +240,15 @@ describe("authentik recipe", () => {
   async function setup(version: string) {
     const stack = await makeStack("authentik", `AUTHENTIK_TAG=${version}\n`);
     const raw = "ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.3}";
-    docker.services.set(stack.dir, [{ name: "server", image: `ghcr.io/goauthentik/server:${version}`, rawImage: raw }]);
+    docker.services.set(stack.dir, [
+      {
+        name: "server",
+        image: `ghcr.io/goauthentik/server:${version}`,
+        rawImage: raw,
+        pullPolicy: null,
+        platform: null,
+      },
+    ]);
     registry.tagsByRepository.set("goauthentik/server", tags);
     return stack;
   }
@@ -246,8 +268,8 @@ describe("authentik recipe", () => {
 test("registry error on one service leaves the other checked", async () => {
   const stack = await makeStack("two");
   docker.services.set(stack.dir, [
-    { name: "a", image: "ghcr.io/o/a:latest", rawImage: "ghcr.io/o/a:latest" },
-    { name: "b", image: "ghcr.io/o/b:latest", rawImage: "ghcr.io/o/b:latest" },
+    { name: "a", image: "ghcr.io/o/a:latest", rawImage: "ghcr.io/o/a:latest", pullPolicy: null, platform: null },
+    { name: "b", image: "ghcr.io/o/b:latest", rawImage: "ghcr.io/o/b:latest", pullPolicy: null, platform: null },
   ]);
   docker.images.set("ghcr.io/o/a:latest", {
     id: "a",
@@ -291,7 +313,15 @@ test("checkAll saves statuses and lastCheck, surviving a failing stack", async (
   const a = await makeStack("aaa");
   const b = await makeStack("bbb");
   docker.services.set(a.dir, new Error("boom"));
-  docker.services.set(b.dir, [{ name: "x", image: "ghcr.io/o/x@sha256:abc", rawImage: "ghcr.io/o/x@sha256:abc" }]);
+  docker.services.set(b.dir, [
+    {
+      name: "x",
+      image: "ghcr.io/o/x@sha256:abc",
+      rawImage: "ghcr.io/o/x@sha256:abc",
+      pullPolicy: null,
+      platform: null,
+    },
+  ]);
   const lines: string[] = [];
   const cfg: UpdaterConfig = { exclude: [], stacks: {} };
   const list = await detection.checkAll(cfg, (l) => lines.push(l));
@@ -303,7 +333,9 @@ test("checkAll saves statuses and lastCheck, surviving a failing stack", async (
 
 test("check stores the config error and keeps the previous config", async () => {
   const web = "lscr.io/linuxserver/web:latest";
-  docker.services.set((await makeStack("web")).dir, [{ name: "web", image: web, rawImage: web }]);
+  docker.services.set((await makeStack("web")).dir, [
+    { name: "web", image: web, rawImage: web, pullPolicy: null, platform: null },
+  ]);
   docker.services.set((await makeStack("skipped")).dir, []);
   await writeFile(configPath, "exclude: [skipped]\n");
   await check();

@@ -5,7 +5,14 @@ type Captured = { code: number; stdout: string; stderr: string };
 type PsEntry = Omit<ContainerState, "imageId"> & { id: string };
 
 const composeConfigSchema = z.object({
-  services: z.record(z.string(), z.object({ image: z.string().optional() }).loose()).default({}),
+  services: z
+    .record(
+      z.string(),
+      z
+        .object({ image: z.string().optional(), pull_policy: z.string().optional(), platform: z.string().optional() })
+        .loose(),
+    )
+    .default({}),
 });
 
 const psEntrySchema = z
@@ -39,7 +46,17 @@ export function parseComposeConfig(resolvedJson: string, rawJson: string): Compo
   const resolved = composeConfigSchema.parse(JSON.parse(resolvedJson)).services;
   const raw = composeConfigSchema.parse(JSON.parse(rawJson)).services;
   return Object.entries(resolved).flatMap(([name, service]) =>
-    service.image ? [{ name, image: service.image, rawImage: raw[name]?.image ?? service.image }] : [],
+    service.image
+      ? [
+          {
+            name,
+            image: service.image,
+            rawImage: raw[name]?.image ?? service.image,
+            pullPolicy: service.pull_policy ?? null,
+            platform: service.platform ?? null,
+          },
+        ]
+      : [],
   );
 }
 
@@ -120,10 +137,15 @@ async function captureOk(args: string[], cwd?: string): Promise<string> {
   return result.stdout;
 }
 
-async function streamed(command: string[], cwd: string, log: LogSink): Promise<number> {
+async function streamed(command: string[], cwd: string | undefined, log: LogSink): Promise<number> {
   const proc = Bun.spawn(command, { cwd, env: commandEnv(process.env), stdout: "pipe", stderr: "pipe" });
   await Promise.all([pipeLines(proc.stdout, log), pipeLines(proc.stderr, log)]);
   return proc.exited;
+}
+
+/** `docker pull`, for registries whose credentials only a credential helper can provide (no progress). */
+export function pullImage(image: string, log: LogSink): Promise<number> {
+  return streamed(["docker", "pull", image], undefined, log);
 }
 
 export function createDockerCli(): Docker {

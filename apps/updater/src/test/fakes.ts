@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ComposeService, ContainerState, Docker, LocalImage } from "../docker/docker";
+import type { ImagePuller, PullResult } from "../docker/engine";
 import type { ImageRef } from "../docker/image-ref";
 import type { Registry } from "../docker/registry";
 
@@ -62,6 +63,27 @@ export class FakeDocker implements Docker {
 
   async removeImage(ref: string): Promise<void> {
     this.removeImageCalls.push(ref);
+  }
+}
+
+export class FakeImagePuller implements ImagePuller {
+  /** Recorded pull(image, platform) calls. */
+  calls: { image: string; platform: string | null }[] = [];
+  /** Result per image: an Error is thrown; default "downloaded". */
+  results = new Map<string, PullResult | Error>();
+  /** Progress reported per image, in order, before the pull resolves. */
+  progressSteps = new Map<string, [number, number][]>();
+
+  async pull(
+    image: string,
+    platform: string | null,
+    onProgress: (downloaded: number, total: number) => void,
+  ): Promise<PullResult> {
+    this.calls.push({ image, platform });
+    for (const [downloaded, total] of this.progressSteps.get(image) ?? []) onProgress(downloaded, total);
+    const result = this.results.get(image) ?? "downloaded";
+    if (result instanceof Error) throw result;
+    return result;
   }
 }
 

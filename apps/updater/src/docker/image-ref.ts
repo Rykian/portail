@@ -5,7 +5,7 @@ export type ImageRef = {
   digest: string | null;
 };
 
-const DOCKER_HUB = "registry-1.docker.io";
+export const DOCKER_HUB = "registry-1.docker.io";
 
 export function parseImageRef(ref: string): ImageRef {
   const at = ref.indexOf("@");

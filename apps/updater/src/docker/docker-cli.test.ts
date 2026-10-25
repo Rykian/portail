@@ -20,8 +20,33 @@ const raw = JSON.stringify({
 
 test("parseComposeConfig merges resolved and raw images, skips build-only services", () => {
   expect(parseComposeConfig(resolved, raw)).toEqual([
-    { name: "app", image: "ghcr.io/x/app:1.2.3", rawImage: "ghcr.io/x/app:${APP_VERSION:-1.0.0}" },
-    { name: "db", image: "postgres:16", rawImage: "postgres:16" },
+    {
+      name: "app",
+      image: "ghcr.io/x/app:1.2.3",
+      rawImage: "ghcr.io/x/app:${APP_VERSION:-1.0.0}",
+      pullPolicy: null,
+      platform: null,
+    },
+    { name: "db", image: "postgres:16", rawImage: "postgres:16", pullPolicy: null, platform: null },
+  ]);
+});
+
+test("parseComposeConfig reads pull_policy and platform", () => {
+  const withPolicy = JSON.stringify({
+    services: {
+      app: { image: "ghcr.io/x/app:1.2.3", pull_policy: "never", platform: "linux/arm64" },
+      db: { image: "postgres:16", pull_policy: "always" },
+    },
+  });
+  expect(parseComposeConfig(withPolicy, withPolicy)).toEqual([
+    {
+      name: "app",
+      image: "ghcr.io/x/app:1.2.3",
+      rawImage: "ghcr.io/x/app:1.2.3",
+      pullPolicy: "never",
+      platform: "linux/arm64",
+    },
+    { name: "db", image: "postgres:16", rawImage: "postgres:16", pullPolicy: "always", platform: null },
   ]);
 });
 

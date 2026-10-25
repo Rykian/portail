@@ -76,7 +76,9 @@ beforeEach(async () => {
   rollbacks = new RollbackStore(db);
   dir = await tempDir();
   logs = [];
-  docker.services.set(dir, [{ name: "app", image: "stirling/app:latest", rawImage: "stirling/app:latest" }]);
+  docker.services.set(dir, [
+    { name: "app", image: "stirling/app:latest", rawImage: "stirling/app:latest", pullPolicy: null, platform: null },
+  ]);
   docker.containersByDir.set(dir, [running("app", "sha256:old")]);
 });
 
@@ -251,8 +253,8 @@ test("a stopped container is not tagged", async () => {
 
 test("pinned services are not tagged nor saved", async () => {
   docker.services.set(dir, [
-    { name: "app", image: "stirling/app:latest", rawImage: "stirling/app:latest" },
-    { name: "db", image: "pg@sha256:abc", rawImage: "pg@sha256:abc" },
+    { name: "app", image: "stirling/app:latest", rawImage: "stirling/app:latest", pullPolicy: null, platform: null },
+    { name: "db", image: "pg@sha256:abc", rawImage: "pg@sha256:abc", pullPolicy: null, platform: null },
   ]);
   docker.containersByDir.set(dir, [running("app", "sha256:old"), running("db", "sha256:db")]);
   await makeUpdater().update(ctx());
@@ -276,8 +278,14 @@ test("scaled services are saved once", async () => {
 test("version mode with no variable target updates like pull mode and leaves the variable alone", async () => {
   await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
   docker.services.set(dir, [
-    { name: "app", image: "stirling/app:v3.4.0", rawImage: "stirling/app:${VERSION}" },
-    { name: "db", image: "postgres:16-alpine", rawImage: "postgres:16-alpine" },
+    {
+      name: "app",
+      image: "stirling/app:v3.4.0",
+      rawImage: "stirling/app:${VERSION}",
+      pullPolicy: null,
+      platform: null,
+    },
+    { name: "db", image: "postgres:16-alpine", rawImage: "postgres:16-alpine", pullPolicy: null, platform: null },
   ]);
   docker.containersByDir.set(dir, [running("app", "sha256:app"), running("db", "sha256:db")]);
   rollbacks.save({

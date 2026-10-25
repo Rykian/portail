@@ -4,9 +4,10 @@ import { AppModule } from "../app.module";
 import { CLOCK, FETCH, type Env } from "../common/runtime";
 import { DATABASE, openDatabase } from "../database/database";
 import { DOCKER, type Docker } from "../docker/docker";
+import { IMAGE_PULLER, type ImagePuller } from "../docker/engine";
 import { REGISTRY, type Registry } from "../docker/registry";
 import { WAIT_HEALTHY, waitHealthy, type WaitHealthy } from "../update/health";
-import { FakeDocker, FakeRegistry } from "./fakes";
+import { FakeDocker, FakeImagePuller, FakeRegistry } from "./fakes";
 
 export type TestOptions = {
   env?: Partial<Env>;
@@ -14,6 +15,8 @@ export type TestOptions = {
   database?: Database;
   /** Default: a FakeDocker with nothing scripted. */
   docker?: Docker;
+  /** Default: a FakeImagePuller that downloads everything. */
+  puller?: ImagePuller;
   /** Default: a FakeRegistry with nothing scripted. */
   registry?: Registry;
   /** Default: rejects with "no network in tests". */
@@ -45,6 +48,8 @@ export function testModuleBuilder(options: TestOptions = {}): TestingModuleBuild
     .useValue(options.database ?? openDatabase(":memory:"))
     .overrideProvider(DOCKER)
     .useValue(options.docker ?? new FakeDocker())
+    .overrideProvider(IMAGE_PULLER)
+    .useValue(options.puller ?? new FakeImagePuller())
     .overrideProvider(REGISTRY)
     .useValue(options.registry ?? new FakeRegistry())
     .overrideProvider(FETCH)

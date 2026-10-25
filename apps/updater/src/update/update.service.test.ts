@@ -75,7 +75,7 @@ const WEB = "lscr.io/linuxserver/web:latest";
 
 /** A floating-tag stack whose `docker compose pull` brings the new image. */
 async function floatingStack(labels: { local: string | null; remote: string | null }) {
-  await makeStack("web", [{ name: "web", image: WEB, rawImage: WEB }]);
+  await makeStack("web", [{ name: "web", image: WEB, rawImage: WEB, pullPolicy: null, platform: null }]);
   docker.images.set(WEB, {
     id: "old",
     repoDigests: ["lscr.io/linuxserver/web@sha256:old"],
@@ -101,7 +101,15 @@ async function authentikStack(compose: string) {
   const image = "ghcr.io/goauthentik/server:2026.8.4";
   await makeStack(
     "authentik",
-    [{ name: "server", image, rawImage: "ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.4}" }],
+    [
+      {
+        name: "server",
+        image,
+        rawImage: "ghcr.io/goauthentik/server:${AUTHENTIK_TAG:-2026.8.4}",
+        pullPolicy: null,
+        platform: null,
+      },
+    ],
     {
       "compose.yml": compose,
       ".env": "AUTHENTIK_TAG=2026.8.4\n",
@@ -187,7 +195,9 @@ test("Authentik preview network error is a bad request", async () => {
 });
 
 test("update without button, unknown stack, queued behind a running job", async () => {
-  await makeStack("lit", [{ name: "db", image: "postgres:16.1.0", rawImage: "postgres:16.1.0" }]);
+  await makeStack("lit", [
+    { name: "db", image: "postgres:16.1.0", rawImage: "postgres:16.1.0", pullPolicy: null, platform: null },
+  ]);
   registry.tagsByRepository.set("library/postgres", ["16.1.0", "16.2.0"]);
   await check();
   expect(detection.stacks().stacks[0]).toMatchObject({ update: true, button: false });
@@ -250,8 +260,14 @@ test("a version stack whose only change is a floating sidecar updates like pull 
   await makeStack(
     "app",
     [
-      { name: "app", image: "ghcr.io/acme/app:1.0.0", rawImage: "ghcr.io/acme/app:${APP_TAG}" },
-      { name: "db", image: sidecar, rawImage: sidecar },
+      {
+        name: "app",
+        image: "ghcr.io/acme/app:1.0.0",
+        rawImage: "ghcr.io/acme/app:${APP_TAG}",
+        pullPolicy: null,
+        platform: null,
+      },
+      { name: "db", image: sidecar, rawImage: sidecar, pullPolicy: null, platform: null },
     ],
     { ".env": "APP_TAG=1.0.0\n" },
   );

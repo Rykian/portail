@@ -86,3 +86,8 @@ export async function waitHealthy(
     await sleep(intervalMs);
   }
 }
+
+export type WaitHealthy = typeof waitHealthy;
+
+/** Injection token for the health wait, so tests can substitute it. */
+export const WAIT_HEALTHY = Symbol("WAIT_HEALTHY");

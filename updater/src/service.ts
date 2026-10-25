@@ -9,8 +9,6 @@ import {
   type UpdateBody,
   type UpdateResponse,
 } from "@shared/updater-api";
-import { match } from "ts-pattern";
-import { authentikMinorUpdate, authentikPreview } from "./authentik";
 import { stackConfig, type UpdaterConfig } from "./config/config";
 import { checkAll, checkStack, type DetectionDeps } from "./detection";
 import { discoverStacks, type DiscoveredStack } from "./stacks/discovery";
@@ -19,8 +17,14 @@ import type { JobRunner } from "./jobs";
 import type { Registry } from "./docker/registry";
 import type { JobStore } from "./jobs/job.store";
 import type { RollbackStore } from "./stacks/rollback.store";
+import type { StackContext } from "./stacks/stack-context";
 import type { StackStatusStore } from "./stacks/stack-status.store";
-import { rollbackStack, updateStack, type StackContext } from "./update";
+import { AuthentikMinorStrategy } from "./strategies/authentik-minor.strategy";
+import { PullStrategy } from "./strategies/pull.strategy";
+import { Strategies } from "./strategies/strategies";
+import { VersionStrategy } from "./strategies/version.strategy";
+import { waitHealthy } from "./update/health";
+import { StackUpdater } from "./update/stack-updater";
 import { planUpdateAll, runUpdateAll } from "./update/update-all";
 
 export class NotFoundError extends Error {
@@ -52,19 +56,21 @@ export type UpdaterServiceDeps = {
 
 type Result = "success" | "failed";
 
-const minorOf = (version: string): string => version.split(".").slice(0, 2).join(".");
-
-const isAuthentikMinor = (status: StackStatus): boolean =>
-  status.mode === "recipe" &&
-  status.needsConfirm &&
-  status.current !== null &&
-  status.available !== null &&
-  minorOf(status.current) !== minorOf(status.available);
-
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 export class UpdaterService {
-  constructor(private readonly deps: UpdaterServiceDeps) {}
+  private readonly strategies: Strategies;
+  private readonly stackUpdater: StackUpdater;
+
+  constructor(private readonly deps: UpdaterServiceDeps) {
+    const { docker, rollbacks } = deps;
+    this.strategies = new Strategies(
+      new PullStrategy(docker),
+      new VersionStrategy(docker),
+      new AuthentikMinorStrategy(deps.fetch ?? globalThis.fetch, docker),
+    );
+    this.stackUpdater = new StackUpdater(docker, rollbacks, this.strategies, waitHealthy);
+  }
 
   stacks(): StacksResponse {
     const { statuses, jobs } = this.deps;
@@ -94,16 +100,14 @@ export class UpdaterService {
     }
 
     let diff: string | null = null;
-    if (isAuthentikMinor(status)) {
-      const ctx = this.context(stack, config, status, () => {});
-      let preview: Awaited<ReturnType<typeof authentikPreview>>;
+    const ctx = this.context(stack, config, status, () => {});
+    const strategy = this.strategies.forUpdate(status, ctx.config);
+    if (strategy.preview) {
       try {
-        preview = await authentikPreview(ctx, this.deps.fetch);
+        diff = await strategy.preview(ctx);
       } catch (error) {
         throw new BadRequestError(messageOf(error));
       }
-      if (!preview.ok) throw new BadRequestError(preview.error);
-      diff = preview.diff;
     }
 
     if (status.needsConfirm && body.confirm !== true) {
@@ -167,7 +171,7 @@ export class UpdaterService {
 
   private detectionDeps(): DetectionDeps {
     const { docker, registry, now } = this.deps;
-    return { docker, registry, now };
+    return { docker, registry, strategies: this.strategies, now };
   }
 
   private async lookup(name: string): Promise<{ stack: DiscoveredStack; status: StackStatus; config: UpdaterConfig }> {
@@ -180,8 +184,7 @@ export class UpdaterService {
   }
 
   private context(stack: DiscoveredStack, config: UpdaterConfig, status: StackStatus, log: LogSink): StackContext {
-    const { docker, rollbacks } = this.deps;
-    return { stack, config: stackConfig(config, stack.name), status, docker, rollbacks, log };
+    return { stack, config: stackConfig(config, stack.name), status, log };
   }
 
   private async singleStep(
@@ -202,18 +205,14 @@ export class UpdaterService {
   /** Runs one stack's update with fresh config and status, then re-checks it on success. */
   private async runUpdate(name: string, log: LogSink): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
-    const ctx = this.context(stack, config, status, log);
-    const result = await match(status.mode)
-      .with("pull", "version", () => updateStack(ctx))
-      .with("recipe", () => (isAuthentikMinor(status) ? authentikMinorUpdate(ctx, this.deps.fetch) : updateStack(ctx)))
-      .exhaustive();
+    const result = await this.stackUpdater.update(this.context(stack, config, status, log));
     if (result === "success") await this.recheck(stack, config);
     return result;
   }
 
   private async runRollback(name: string, log: LogSink): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
-    const result = await rollbackStack(this.context(stack, config, status, log));
+    const result = await this.stackUpdater.rollback(this.context(stack, config, status, log));
     if (result === "success") await this.recheck(stack, config);
     return result;
   }

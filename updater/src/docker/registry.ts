@@ -6,6 +6,9 @@ export interface Registry {
   tags(ref: ImageRef): Promise<string[]>;
 }
 
+/** Injection token for the registry client. */
+export const REGISTRY = Symbol("REGISTRY");
+
 const MANIFEST_ACCEPT = [
   "application/vnd.oci.image.index.v1+json",
   "application/vnd.docker.distribution.manifest.list.v2+json",

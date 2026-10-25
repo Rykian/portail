@@ -2,11 +2,15 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, expect, test } from "vitest";
 import type { StackStatus } from "@shared/updater-api";
-import { openDatabase } from "./database/database";
-import { authentikMinorUpdate, authentikPreview, normalizeCompose, upstreamComposeUrl } from "./authentik";
-import { RollbackStore } from "./stacks/rollback.store";
-import { FakeDocker, tempDir } from "./test/fakes";
-import type { StackContext } from "./update";
+import { openDatabase } from "../database/database";
+import { RollbackStore } from "../stacks/rollback.store";
+import type { StackContext } from "../stacks/stack-context";
+import { FakeDocker, tempDir } from "../test/fakes";
+import { StackUpdater } from "../update/stack-updater";
+import { AuthentikMinorStrategy, normalizeCompose, upstreamComposeUrl } from "./authentik-minor.strategy";
+import { PullStrategy } from "./pull.strategy";
+import { Strategies } from "./strategies";
+import { VersionStrategy } from "./version.strategy";
 
 const upstream08 = "services:\n  server:\n    image: x:${AUTHENTIK_TAG:-2026.8.4}\n    restart: always\n";
 const upstream10 = "services:\n  server:\n    image: x:${AUTHENTIK_TAG:-2026.10.2}\n    restart: unless-stopped\n";
@@ -32,6 +36,8 @@ const status: StackStatus = {
 
 let docker: FakeDocker;
 let rollbacks: RollbackStore;
+let strategy: AuthentikMinorStrategy;
+let updater: StackUpdater;
 let dir: string;
 let logs: string[];
 let requested: string[];
@@ -58,16 +64,16 @@ function ctx(config: Partial<StackContext["config"]> = {}): StackContext {
       ...config,
     },
     status,
-    docker,
-    rollbacks,
     log: (line) => logs.push(line),
-    wait: async () => ({ ok: true }),
   };
 }
 
 beforeEach(async () => {
   docker = new FakeDocker();
   rollbacks = new RollbackStore(openDatabase(":memory:"));
+  strategy = new AuthentikMinorStrategy(fetchFn, docker);
+  const strategies = new Strategies(new PullStrategy(docker), new VersionStrategy(docker), strategy);
+  updater = new StackUpdater(docker, rollbacks, strategies, async () => ({ ok: true }));
   dir = await tempDir();
   logs = [];
   requested = [];
@@ -89,35 +95,32 @@ test("normalizeCompose drops CR and the tag default", () => {
   );
 });
 
-test("preview returns versions and the upstream diff", async () => {
-  const result = await authentikPreview(ctx(), fetchFn);
-  expect(result).toMatchObject({ ok: true, from: "2026.8.4", to: "2026.10.2" });
-  if (!result.ok) return;
-  expect(result.diff).toContain("---");
-  expect(result.diff).toContain("+++");
-  expect(result.diff).toContain("-    restart: always");
-  expect(result.diff).toContain("+    restart: unless-stopped");
+test("preview returns the upstream diff", async () => {
+  const diff = await strategy.preview(ctx());
+  expect(diff).toContain("---");
+  expect(diff).toContain("+++");
+  expect(diff).toContain("-    restart: always");
+  expect(diff).toContain("+    restart: unless-stopped");
   expect(requested).toEqual([upstreamComposeUrl("2026.8"), upstreamComposeUrl("2026.10")]);
 });
 
 test("preview refuses local modifications", async () => {
   await writeFile(join(dir, "compose.yml"), `${localCompose}    extra: line\r\n`);
-  expect(await authentikPreview(ctx(), fetchFn)).toEqual({ ok: false, error: localError });
+  await expect(strategy.preview(ctx())).rejects.toThrow(new Error(localError));
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.8.4\n");
 });
 
 test("preview reports a missing upstream file", async () => {
   statuses[upstreamComposeUrl("2026.10")] = 404;
-  expect(await authentikPreview(ctx(), fetchFn)).toEqual({
-    ok: false,
-    error: "compose.yml amont introuvable pour 2026.10 (HTTP 404)",
-  });
+  await expect(strategy.preview(ctx())).rejects.toThrow(
+    new Error("compose.yml amont introuvable pour 2026.10 (HTTP 404)"),
+  );
 });
 
 for (const withOverride of [false, true]) {
   test(`minor update replaces compose.yml (override present: ${withOverride})`, async () => {
     if (withOverride) await writeFile(join(dir, "compose.override.yml"), "services: {}\n");
-    expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("success");
+    expect(await updater.update(ctx())).toBe("success");
     expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
     expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");
     expect(rollbacks.get("authentik")).toMatchObject({
@@ -136,7 +139,7 @@ for (const withOverride of [false, true]) {
 test("minor update refuses local modifications and changes nothing", async () => {
   const modified = `${localCompose}    extra: line\r\n`;
   await writeFile(join(dir, "compose.yml"), modified);
-  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
+  expect(await updater.update(ctx())).toBe("failed");
   expect(logs).toContain(localError);
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(modified);
   expect(rollbacks.get("authentik")).toBeNull();
@@ -145,7 +148,7 @@ test("minor update refuses local modifications and changes nothing", async () =>
 
 test("upstream 404 fails without changing anything", async () => {
   statuses[upstreamComposeUrl("2026.10")] = 404;
-  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
+  expect(await updater.update(ctx())).toBe("failed");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.8.4\n");
   expect(rollbacks.get("authentik")).toBeNull();
@@ -153,14 +156,14 @@ test("upstream 404 fails without changing anything", async () => {
 
 test("before command failure stops before any change", async () => {
   docker.shellExit = () => 2;
-  expect(await authentikMinorUpdate(ctx({ before: ["backup"] }), fetchFn)).toBe("failed");
+  expect(await updater.update(ctx({ before: ["backup"] }))).toBe("failed");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
   expect(docker.composeCalls).toEqual([]);
 });
 
 test("a stopped stack gets the new compose.yml and version, is pulled and stays stopped", async () => {
   docker.containersByDir.set(dir, []);
-  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("success");
+  expect(await updater.update(ctx())).toBe("success");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
@@ -170,8 +173,8 @@ test("a stopped stack gets the new compose.yml and version, is pulled and stays 
 test("a target that is not newer than the .env value is refused before anything is fetched or changed", async () => {
   await writeFile(join(dir, ".env"), "AUTHENTIK_TAG=2026.10.3\n");
   const message = "la version 2026.10.2 n'est pas plus récente que 2026.10.3 déjà dans .env : mise à jour annulée";
-  expect(await authentikPreview(ctx(), fetchFn)).toEqual({ ok: false, error: message });
-  expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
+  await expect(strategy.preview(ctx())).rejects.toThrow(new Error(message));
+  expect(await updater.update(ctx())).toBe("failed");
   expect(logs).toContain(message);
   expect(requested).toEqual([]);
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);

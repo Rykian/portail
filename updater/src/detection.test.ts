@@ -8,6 +8,10 @@ import { checkAll, checkStack, type DetectionDeps } from "./detection";
 import type { DiscoveredStack } from "./stacks/discovery";
 import { RollbackStore } from "./stacks/rollback.store";
 import { StackStatusStore } from "./stacks/stack-status.store";
+import { AuthentikMinorStrategy } from "./strategies/authentik-minor.strategy";
+import { PullStrategy } from "./strategies/pull.strategy";
+import { Strategies } from "./strategies/strategies";
+import { VersionStrategy } from "./strategies/version.strategy";
 import { FakeDocker, FakeRegistry, tempDir } from "./test/fakes";
 
 const NOW = new Date("2026-10-24T10:00:00.000Z");
@@ -19,7 +23,12 @@ let root: string;
 beforeEach(async () => {
   docker = new FakeDocker();
   registry = new FakeRegistry();
-  deps = { docker, registry, now: () => NOW };
+  const strategies = new Strategies(
+    new PullStrategy(docker),
+    new VersionStrategy(docker),
+    new AuthentikMinorStrategy(fetch, docker),
+  );
+  deps = { docker, registry, strategies, now: () => NOW };
   root = await tempDir();
 });
 

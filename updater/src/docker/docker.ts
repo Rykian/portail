@@ -32,3 +32,10 @@ export interface Docker {
   tag(source: string, target: string): Promise<void>;
   removeImage(ref: string): Promise<void>;
 }
+
+/** Injection token for the Docker implementation. */
+export const DOCKER = Symbol("DOCKER");
+
+/** A crash-looping container belongs to a running stack too. */
+export const isUp = (container: ContainerState): boolean =>
+  container.state === "running" || container.state === "restarting";

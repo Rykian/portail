@@ -10,11 +10,12 @@ import { parseImageRef } from "./docker/image-ref";
 import type { Registry } from "./docker/registry";
 import type { RollbackState, RollbackStore } from "./stacks/rollback.store";
 import type { StackStatusStore } from "./stacks/stack-status.store";
-import { authentikTarget, isLiteralVersion, isMajorBump, newestAbove } from "./docker/versions";
+import type { Strategies } from "./strategies/strategies";
+import { isLiteralVersion, isMajorBump } from "./docker/versions";
 
-export type DetectionDeps = { docker: Docker; registry: Registry; now: () => Date };
+export type DetectionDeps = { docker: Docker; registry: Registry; strategies: Strategies; now: () => Date };
 
-type Checked = { status: ServiceStatus; authentikKind: "patch" | "minor" | null };
+type Checked = { status: ServiceStatus; needsConfirm: boolean };
 
 function kindOf(service: ComposeService, config: StackConfig): ServiceKind {
   const variable = config.version?.variable;
@@ -37,36 +38,31 @@ const baseStatus = (service: ComposeService, kind: ServiceKind): ServiceStatus =
 async function checkService(
   service: ComposeService,
   config: StackConfig,
-  { docker, registry }: DetectionDeps,
+  { docker, registry, strategies }: DetectionDeps,
 ): Promise<Checked> {
   const kind = kindOf(service, config);
   const base = baseStatus(service, kind);
   const ref = parseImageRef(service.image);
 
   return match(kind)
-    .with("pinned", async (): Promise<Checked> => ({ status: base, authentikKind: null }))
+    .with("pinned", async (): Promise<Checked> => ({ status: base, needsConfirm: false }))
     .with("floating", async (): Promise<Checked> => {
       const local = await docker.image(service.image);
-      if (!local) return { status: { ...base, error: "image locale introuvable" }, authentikKind: null };
+      if (!local) return { status: { ...base, error: "image locale introuvable" }, needsConfirm: false };
       const remoteDigest = await registry.digest(ref);
       const update = !local.repoDigests.some((d) => d.endsWith(`@${remoteDigest}`));
-      if (!update) return { status: base, authentikKind: null };
+      if (!update) return { status: base, needsConfirm: false };
       const remote = await registry.details(ref);
       const status =
         local.version !== null && remote.version !== null
           ? { ...base, update, current: local.version, available: remote.version }
           : { ...base, update, newImageDate: remote.created };
-      return { status, authentikKind: null };
+      return { status, needsConfirm: false };
     })
     .with("variable", "literal", async (): Promise<Checked> => {
       const tags = await registry.tags(ref);
-      const target = config.recipe === "authentik" && kind === "variable" ? authentikTarget(ref.tag, tags) : null;
-      const available =
-        config.recipe === "authentik" && kind === "variable" ? (target?.to ?? null) : newestAbove(ref.tag, tags);
-      return {
-        status: { ...base, current: ref.tag, available, update: available !== null },
-        authentikKind: target?.kind ?? null,
-      };
+      const { to, needsConfirm } = strategies.target(config, kind, ref.tag, tags);
+      return { status: { ...base, current: ref.tag, available: to, update: to !== null }, needsConfirm };
     })
     .exhaustive();
 }
@@ -78,7 +74,7 @@ async function safeCheckService(service: ComposeService, config: StackConfig, de
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: { ...baseStatus(service, kindOf(service, config)), error: message },
-      authentikKind: null,
+      needsConfirm: false,
     };
   }
 }
@@ -137,7 +133,6 @@ export async function checkStack(
   }
 
   const major = current !== null && available !== null && isMajorBump(current, available);
-  const authentikMinor = mode === "recipe" && updated.some((c) => c.authentikKind === "minor");
 
   return {
     ...base,
@@ -147,7 +142,7 @@ export async function checkStack(
     current,
     available,
     major,
-    needsConfirm: config.confirm || major || authentikMinor,
+    needsConfirm: config.confirm || major || checked.some((c) => c.status.update && c.needsConfirm),
   };
 }
 

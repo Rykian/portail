@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import type { JobStep, StackStatus } from "@shared/updater-api";
-import type { JobContext } from "./jobs";
+import type { JobContext } from "../jobs";
 import { planUpdateAll, runUpdateAll } from "./update-all";
 
 function stack(name: string, overrides: Partial<StackStatus> = {}): StackStatus {

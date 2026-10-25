@@ -2,7 +2,7 @@ import { chmod, lstat, readdir, readFile, stat, symlink, writeFile } from "node:
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { readVariable, readVariableFile, rewriteVariable, writeVariableFile } from "./env-file";
-import { tempDir } from "./test/fakes";
+import { tempDir } from "../test/fakes";
 
 const env = 'A=1\r\nexport VERSION="v3.4.0" # pinned\r\nB=2';
 

@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { discoverStacks } from "./discovery";
-import { tempDir } from "./test/fakes";
+import { tempDir } from "../test/fakes";
 
 async function makeRoot(layout: Record<string, string[]>): Promise<string> {
   const root = await tempDir();

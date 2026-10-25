@@ -1,7 +1,7 @@
 import { filter, map, partition, pipe, sortBy } from "remeda";
 import type { JobStep, StackStatus } from "@shared/updater-api";
-import type { LogSink } from "./docker";
-import type { JobContext } from "./jobs";
+import type { LogSink } from "../docker/docker";
+import type { JobContext } from "../jobs";
 
 /** Stacks updated last: the ones with a `last` flag or a dedicated recipe. */
 export function planUpdateAll(stacks: StackStatus[]): string[] {

@@ -1,9 +1,9 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ComposeService, ContainerState, Docker, LocalImage } from "../docker";
-import type { ImageRef } from "../image-ref";
-import type { Registry } from "../registry";
+import type { ComposeService, ContainerState, Docker, LocalImage } from "../docker/docker";
+import type { ImageRef } from "../docker/image-ref";
+import type { Registry } from "../docker/registry";
 
 export function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), "updater-test-"));

@@ -2,14 +2,14 @@ import { join } from "node:path";
 import type { ServiceKind, ServiceStatus, StackStatus, UpdateMode } from "@shared/updater-api";
 import { find } from "remeda";
 import { match } from "ts-pattern";
-import { stackConfig, type StackConfig, type UpdaterConfig } from "./config";
-import type { ComposeService, Docker, LogSink } from "./docker";
-import { discoverStacks, type DiscoveredStack } from "./discovery";
-import { readVariableFile } from "./env-file";
-import { parseImageRef } from "./image-ref";
-import type { Registry } from "./registry";
+import { stackConfig, type StackConfig, type UpdaterConfig } from "./config/config";
+import type { ComposeService, Docker, LogSink } from "./docker/docker";
+import { discoverStacks, type DiscoveredStack } from "./stacks/discovery";
+import { readVariableFile } from "./stacks/env-file";
+import { parseImageRef } from "./docker/image-ref";
+import type { Registry } from "./docker/registry";
 import type { RollbackState, Store } from "./store";
-import { authentikTarget, isLiteralVersion, isMajorBump, newestAbove } from "./versions";
+import { authentikTarget, isLiteralVersion, isMajorBump, newestAbove } from "./docker/versions";
 
 export type DetectionDeps = { docker: Docker; registry: Registry; now: () => Date };
 

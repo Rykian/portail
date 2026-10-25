@@ -11,15 +11,15 @@ import {
 } from "@shared/updater-api";
 import { match } from "ts-pattern";
 import { authentikMinorUpdate, authentikPreview } from "./authentik";
-import { stackConfig, type UpdaterConfig } from "./config";
+import { stackConfig, type UpdaterConfig } from "./config/config";
 import { checkAll, checkStack, type DetectionDeps } from "./detection";
-import { discoverStacks, type DiscoveredStack } from "./discovery";
-import type { Docker, LogSink } from "./docker";
+import { discoverStacks, type DiscoveredStack } from "./stacks/discovery";
+import type { Docker, LogSink } from "./docker/docker";
 import type { JobRunner } from "./jobs";
-import type { Registry } from "./registry";
+import type { Registry } from "./docker/registry";
 import type { Store } from "./store";
 import { rollbackStack, updateStack, type StackContext } from "./update";
-import { planUpdateAll, runUpdateAll } from "./update-all";
+import { planUpdateAll, runUpdateAll } from "./update/update-all";
 
 export class NotFoundError extends Error {
   constructor(message: string) {

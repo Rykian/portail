@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import type { ContainerState } from "./docker";
+import type { ContainerState } from "../docker/docker";
 import { evaluateHealth, waitHealthy } from "./health";
 
 const c = (service: string, overrides: Partial<ContainerState> = {}): ContainerState => ({

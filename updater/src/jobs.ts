@@ -1,6 +1,6 @@
 import { isDeepEqual } from "remeda";
 import type { Job, JobEvent, JobKind, JobStatus, JobStep } from "@shared/updater-api";
-import type { LogSink } from "./docker";
+import type { LogSink } from "./docker/docker";
 import type { Store } from "./store";
 
 export class BusyError extends Error {

@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { createConfigLoader, parseConfig, stackConfig } from "./config";
-import { tempDir } from "./test/fakes";
+import { tempDir } from "../test/fakes";
 
 const example = `
 exclude: [authelia, updater, wud, "*.back", "*.bak-*"]

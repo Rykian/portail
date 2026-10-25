@@ -2,13 +2,13 @@ import { join } from "node:path";
 import type { StackStatus } from "@shared/updater-api";
 import { uniqueBy } from "remeda";
 import { match } from "ts-pattern";
-import type { StackConfig } from "./config";
-import type { DiscoveredStack } from "./discovery";
-import type { ComposeService, ContainerState, Docker, LogSink } from "./docker";
-import { readVariableFile, writeFileAtomic, writeVariableFile } from "./env-file";
-import { waitHealthy } from "./health";
+import type { StackConfig } from "./config/config";
+import type { DiscoveredStack } from "./stacks/discovery";
+import type { ComposeService, ContainerState, Docker, LogSink } from "./docker/docker";
+import { readVariableFile, writeFileAtomic, writeVariableFile } from "./stacks/env-file";
+import { waitHealthy } from "./update/health";
 import type { RollbackState, Store } from "./store";
-import { compareVersions } from "./versions";
+import { compareVersions } from "./docker/versions";
 
 export type StackContext = {
   stack: DiscoveredStack;

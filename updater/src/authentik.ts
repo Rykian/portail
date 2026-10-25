@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { createTwoFilesPatch } from "diff";
 import { readFile } from "node:fs/promises";
-import { readVariableFile, writeFileAtomic, writeVariableFile } from "./env-file";
+import { readVariableFile, writeFileAtomic, writeVariableFile } from "./stacks/env-file";
 import { fail, notNewerMessage, pullAndStart, runBeforeCommands, saveRollback, type StackContext } from "./update";
-import { compareVersions } from "./versions";
+import { compareVersions } from "./docker/versions";
 
 type Preview =
   | { ok: true; from: string; to: string; diff: string; upstreamTarget: string; localCompose: string }

@@ -1,6 +1,6 @@
 import { filter, groupBy, unique } from "remeda";
 import { match } from "ts-pattern";
-import type { ContainerState } from "./docker";
+import type { ContainerState } from "../docker/docker";
 
 export type HealthResult = { ok: true } | { ok: false; problems: string[] };
 

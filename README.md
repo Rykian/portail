@@ -7,13 +7,13 @@ Design: `docs/superpowers/specs/2026-10-11-portail-design.md`.
 ## Développement
 
 ```bash
-npm install
+bun install
 mkdir -p data/icons && cp services.example.yml data/services.yml
-npm run dev            # fake user from .env.development, no Authentik needed
-npm run lint           # oxlint
-npm run format         # oxfmt
-npm test               # Vitest
-npm run e2e            # Playwright
+bun run dev            # fake user from .env.development, no Authentik needed
+bun run lint           # oxlint
+bun run format         # oxfmt
+bun run test           # Vitest
+bun run e2e            # Playwright
 ```
 
 `DEV_USER_GROUPS` (`.env.development`) sets the fake user's groups; `DEV_ORIGIN=internet` simulates a visit from outside.
@@ -24,7 +24,7 @@ npm run e2e            # Playwright
 
 ```bash
 docker compose pull && docker compose up -d        # update
-docker compose run --rm -v ./data/icons:/data/icons portal node scripts/fetch-icons.mjs   # new icons
+docker compose run --rm -v ./data/icons:/data/icons portal bun scripts/fetch-icons.mjs   # new icons
 ```
 
 Edits to `data/services.yml` are picked up on the next page load. Admins must also be in the `family` group to see family entries.
@@ -70,4 +70,4 @@ bun run test           # Vitest
 bun run typecheck
 ```
 
-Les tests de `shared/` tournent dans la suite racine (`npm test`), pas dans celle de l'updater.
+Les tests de `shared/` tournent dans la suite racine (`bun run test`), pas dans celle de l'updater.

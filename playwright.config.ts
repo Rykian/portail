@@ -31,12 +31,12 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "node e2e/fake-updater.mts",
+      command: "bun e2e/fake-updater.mts",
       url: "http://localhost:3101/health",
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: `npx next dev -p ${port}`,
+      command: `bun --bun next dev -p ${port}`,
       url: `http://localhost:${port}/favicon.ico`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,

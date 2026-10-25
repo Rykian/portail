@@ -1,4 +1,4 @@
-// Fake updater for the Playwright e2e run: `node e2e/fake-updater.mts` (Node strips the types).
+// Fake updater for the Playwright e2e run: `bun e2e/fake-updater.mts`.
 // Plain node:http, no import from the repo. Extend `routes` for new endpoints.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 

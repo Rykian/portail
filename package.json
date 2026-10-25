@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "bun --bun vitest run",
     "e2e": "playwright test",
-    "fetch-icons": "node scripts/fetch-icons.mjs"
+    "fetch-icons": "bun scripts/fetch-icons.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -42,5 +42,6 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
-  }
+  },
+  "packageManager": "bun@1.4.4"
 }

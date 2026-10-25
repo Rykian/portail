@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { z } from "zod";
 
@@ -29,7 +28,7 @@ const updaterConfigSchema = z.strictObject({
 export type StackConfig = z.infer<typeof stackConfigSchema>;
 export type UpdaterConfig = z.infer<typeof updaterConfigSchema>;
 
-const emptyConfig = (): UpdaterConfig => ({ exclude: [], stacks: {} });
+export const emptyConfig = (): UpdaterConfig => ({ exclude: [], stacks: {} });
 
 export function parseConfig(text: string): UpdaterConfig {
   return updaterConfigSchema.parse(parse(text) ?? {});
@@ -44,28 +43,4 @@ export function stackConfig(config: UpdaterConfig, name: string): StackConfig {
       beforeOnlyOnMajor: false,
     }
   );
-}
-
-export function createConfigLoader(path: string): () => Promise<{ config: UpdaterConfig; error: string | null }> {
-  let lastGood: UpdaterConfig = emptyConfig();
-
-  return async function load() {
-    let text: string;
-    try {
-      text = await readFile(path, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        lastGood = emptyConfig();
-        return { config: lastGood, error: null };
-      }
-      return { config: lastGood, error: String(error) };
-    }
-    try {
-      lastGood = parseConfig(text);
-      return { config: lastGood, error: null };
-    } catch (error) {
-      const message = error instanceof z.ZodError ? z.prettifyError(error) : String(error);
-      return { config: lastGood, error: message };
-    }
-  };
 }

@@ -1,7 +1,9 @@
+import { Inject, Injectable } from "@nestjs/common";
 import { isDeepEqual } from "remeda";
 import type { Job, JobEvent, JobKind, JobStatus, JobStep } from "@shared/updater-api";
-import type { LogSink } from "./docker/docker";
-import type { JobStore } from "./jobs/job.store";
+import { CLOCK } from "../common/runtime";
+import type { LogSink } from "../docker/docker";
+import { JobStore } from "./job.store";
 
 export class BusyError extends Error {
   constructor() {
@@ -14,13 +16,15 @@ export type JobContext = { id: number; log: LogSink; setSteps(steps: JobStep[]):
 
 type Running = { id: number; listeners: Set<(event: JobEvent) => void>; steps: JobStep[]; finished: boolean };
 
+/** Runs one job at a time, records its log and steps in the store and streams them to followers. */
+@Injectable()
 export class JobRunner {
   private current: Running | null = null;
   private idleWaiters: (() => void)[] = [];
 
   constructor(
-    private readonly store: JobStore,
-    private readonly now: () => Date,
+    @Inject(JobStore) private readonly store: JobStore,
+    @Inject(CLOCK) private readonly now: () => Date,
   ) {}
 
   start(

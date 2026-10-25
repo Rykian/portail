@@ -1,8 +1,5 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createConfigLoader, parseConfig, stackConfig } from "./config";
-import { tempDir } from "../test/fakes";
+import { parseConfig, stackConfig } from "./config";
 
 const example = `
 exclude: [authelia, updater, wud, "*.back", "*.bak-*"]
@@ -54,28 +51,4 @@ test("stackConfig returns defaults for an unknown stack", () => {
     before: [],
     beforeOnlyOnMajor: false,
   });
-});
-
-test("loader handles missing, invalid and recovered files", async () => {
-  const dir = await tempDir();
-  const path = join(dir, "sub", "config.yml");
-  const load = createConfigLoader(path);
-  expect(await load()).toEqual({ config: { exclude: [], stacks: {} }, error: null });
-
-  await mkdir(join(dir, "sub"));
-  await writeFile(path, "stacks: { a: { last: true } }");
-  const good = await load();
-  expect(good.error).toBeNull();
-  expect(good.config.stacks.a.last).toBe(true);
-
-  await writeFile(path, "stacks: { a: { lst: true } }");
-  const bad = await load();
-  expect(bad.config).toEqual(good.config);
-  expect(bad.error).toContain("Unrecognized key");
-
-  await writeFile(path, "stacks: { b: {} }");
-  const again = await load();
-  expect(again.error).toBeNull();
-  expect(Object.keys(again.config.stacks)).toEqual(["b"]);
-  await rm(dir, { recursive: true });
 });

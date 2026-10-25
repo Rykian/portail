@@ -2,9 +2,13 @@ import "reflect-metadata";
 import type { INestApplication } from "@nestjs/common";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { stacksResponseSchema, type JobEvent } from "@shared/updater-api";
-import { BusyError } from "../jobs";
-import { NotFoundError, type UpdaterService } from "../service";
-import { createApp } from "./app.module";
+import { NotFoundError } from "./common/errors";
+import { DetectionService } from "./detection/detection.service";
+import { BusyError, JobRunner } from "./jobs/job-runner";
+import { JobStore } from "./jobs/job.store";
+import { SchedulerService } from "./scheduler/scheduler.service";
+import { testModuleBuilder } from "./test/module";
+import { UpdateService } from "./update/update.service";
 
 const TOKEN = "secret-token";
 const auth = { authorization: `Bearer ${TOKEN}` };
@@ -65,13 +69,25 @@ const stub = {
             },
           }
         : null,
-} as unknown as UpdaterService;
+};
 
 beforeEach(async () => {
   calls = [];
   returned = false;
   updateImpl = async () => ({ jobId: 7 });
-  app = await createApp(stub, TOKEN);
+  const moduleRef = await testModuleBuilder()
+    .overrideProvider(DetectionService)
+    .useValue({ stacks: stub.stacks })
+    .overrideProvider(UpdateService)
+    .useValue({ update: stub.update })
+    .overrideProvider(JobStore)
+    .useValue({ history: stub.history })
+    .overrideProvider(JobRunner)
+    .useValue({ events: stub.events })
+    .overrideProvider(SchedulerService)
+    .useValue({})
+    .compile();
+  app = moduleRef.createNestApplication({ logger: ["error", "warn"] });
   await app.listen(0, "127.0.0.1");
   base = await app.getUrl();
   base = base.replace("[::1]", "127.0.0.1");

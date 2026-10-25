@@ -1,15 +1,18 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Database } from "bun:sqlite";
+import type { TestingModule } from "@nestjs/testing";
 import { beforeEach, expect, test } from "vitest";
-import { createConfigLoader } from "./config/config";
-import { openDatabase } from "./database/database";
-import type { ComposeService } from "./docker/docker";
-import { BusyError, JobRunner } from "./jobs";
-import { JobStore } from "./jobs/job.store";
-import { BadRequestError, NotFoundError, UpdaterService } from "./service";
-import { RollbackStore } from "./stacks/rollback.store";
-import { StackStatusStore } from "./stacks/stack-status.store";
-import { FakeDocker, FakeRegistry, tempDir } from "./test/fakes";
+import { BadRequestError, NotFoundError } from "../common/errors";
+import { openDatabase } from "../database/database";
+import { DetectionService } from "../detection/detection.service";
+import type { ComposeService } from "../docker/docker";
+import { BusyError, JobRunner } from "../jobs/job-runner";
+import { JobStore } from "../jobs/job.store";
+import { RollbackStore } from "../stacks/rollback.store";
+import { FakeDocker, FakeRegistry, tempDir } from "../test/fakes";
+import { testModule } from "../test/module";
+import { UpdateService } from "./update.service";
 
 const NOW = new Date("2026-10-24T10:00:00.000Z");
 const WARNING =
@@ -22,11 +25,13 @@ let root: string;
 let configPath: string;
 let docker: FakeDocker;
 let registry: FakeRegistry;
-let statuses: StackStatusStore;
+let database: Database;
+let moduleRef: TestingModule;
 let rollbacks: RollbackStore;
 let jobStore: JobStore;
 let jobs: JobRunner;
-let service: UpdaterService;
+let detection: DetectionService;
+let service: UpdateService;
 
 const fetchFn = (async (url: string) =>
   new Response(url.includes("2026.10") ? upstream10 : upstream08, { status: 200 })) as unknown as typeof fetch;
@@ -36,23 +41,20 @@ beforeEach(async () => {
   configPath = join(root, "config.yml");
   docker = new FakeDocker();
   registry = new FakeRegistry();
-  const db = openDatabase(":memory:");
-  statuses = new StackStatusStore(db);
-  rollbacks = new RollbackStore(db);
-  jobStore = new JobStore(db);
-  jobs = new JobRunner(jobStore, () => NOW);
-  service = new UpdaterService({
-    root,
-    loadConfig: createConfigLoader(configPath),
+  database = openDatabase(":memory:");
+  moduleRef = await testModule({
+    database,
     docker,
     registry,
-    statuses,
-    rollbacks,
-    jobStore,
-    jobs,
-    now: () => NOW,
     fetch: fetchFn,
+    now: () => NOW,
+    env: { root, configPath },
   });
+  rollbacks = moduleRef.get(RollbackStore);
+  jobStore = moduleRef.get(JobStore);
+  jobs = moduleRef.get(JobRunner);
+  detection = moduleRef.get(DetectionService);
+  service = moduleRef.get(UpdateService);
 });
 
 async function makeStack(name: string, services: ComposeService[], files: Record<string, string> = {}) {
@@ -65,7 +67,7 @@ async function makeStack(name: string, services: ComposeService[], files: Record
 }
 
 async function check() {
-  service.check(null);
+  detection.check(null);
   await jobs.idle();
 }
 
@@ -119,7 +121,7 @@ test("update on a confirm stack without confirm answers needsConfirm and starts 
   const response = await service.update("web", {}, "a@b.c");
   expect(response).toEqual({ needsConfirm: { from: "1.0", to: "1.1", diff: null, warning: WARNING } });
   expect(jobs.running()).toBeNull();
-  expect(service.history(null).jobs).toEqual([]);
+  expect(jobStore.history(null).jobs).toEqual([]);
 
   const started = await service.update("web", { confirm: true }, "a@b.c");
   expect(started).toEqual({ jobId: expect.any(Number) });
@@ -131,13 +133,13 @@ test("a successful update re-checks the stack and records from/to on the step", 
   await check();
   const response = await service.update("web", {}, "a@b.c");
   if (!("jobId" in response)) throw new Error("expected a job");
-  expect(service.job(response.jobId)?.steps[0]).toMatchObject({ stack: "web", from: "1.0", to: "1.1" });
+  expect(jobStore.job(response.jobId)?.steps[0]).toMatchObject({ stack: "web", from: "1.0", to: "1.1" });
   await jobs.idle();
 
-  const job = service.job(response.jobId);
+  const job = jobStore.job(response.jobId);
   expect(job).toMatchObject({ kind: "update", user: "a@b.c", status: "success" });
   expect(job?.steps[0]).toEqual({ stack: "web", status: "success", from: "1.0", to: "1.1" });
-  const web = service.stacks().stacks.find((s) => s.name === "web");
+  const web = detection.stacks().stacks.find((s) => s.name === "web");
   expect(web).toMatchObject({ update: false, rollback: { to: "1.0" } });
 });
 
@@ -146,7 +148,7 @@ test("pull mode without version: rollback goes to « l'image précédente »", a
   await check();
   await service.update("web", {}, null);
   await jobs.idle();
-  expect(service.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
 });
 
 test("Authentik minor without confirm answers the upstream diff", async () => {
@@ -169,20 +171,18 @@ test("Authentik minor with local modifications is refused", async () => {
 test("Authentik preview network error is a bad request", async () => {
   await authentikStack(upstream08);
   await check();
-  const failing = new UpdaterService({
-    root,
-    loadConfig: createConfigLoader(configPath),
-    docker,
-    registry,
-    statuses,
-    rollbacks,
-    jobStore,
-    jobs,
-    now: () => NOW,
-    fetch: (async () => {
-      throw new Error("réseau indisponible");
-    }) as unknown as typeof fetch,
-  });
+  const failing = (
+    await testModule({
+      database,
+      docker,
+      registry,
+      fetch: (async () => {
+        throw new Error("réseau indisponible");
+      }) as unknown as typeof fetch,
+      now: () => NOW,
+      env: { root, configPath },
+    })
+  ).get(UpdateService);
   await expect(failing.update("authentik", {}, null)).rejects.toThrow(new BadRequestError("réseau indisponible"));
 });
 
@@ -190,7 +190,7 @@ test("update without button, unknown stack, busy", async () => {
   await makeStack("lit", [{ name: "db", image: "postgres:16.1.0", rawImage: "postgres:16.1.0" }]);
   registry.tagsByRepository.set("library/postgres", ["16.1.0", "16.2.0"]);
   await check();
-  expect(service.stacks().stacks[0]).toMatchObject({ update: true, button: false });
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: true, button: false });
   await expect(service.update("lit", {}, null)).rejects.toBeInstanceOf(BadRequestError);
   await expect(service.update("nope", {}, null)).rejects.toBeInstanceOf(NotFoundError);
 
@@ -218,8 +218,8 @@ test("rollback needs a rollback state, then restores and re-checks", async () =>
   expect(job.kind).toBe("rollback");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
-  expect(service.job(job.id)?.status).toBe("success");
-  expect(service.stacks().stacks[0]?.rollback).toBeNull();
+  expect(jobStore.job(job.id)?.status).toBe("success");
+  expect(detection.stacks().stacks[0]?.rollback).toBeNull();
 });
 
 test("a failed update exposes the rollback saved for it, and rollback() starts a job", async () => {
@@ -228,18 +228,18 @@ test("a failed update exposes the rollback saved for it, and rollback() starts a
     { service: "web", state: "running", exitCode: 0, health: null, imageId: "old" },
   ]);
   await check();
-  expect(service.stacks().stacks[0]?.rollback).toBeNull();
+  expect(detection.stacks().stacks[0]?.rollback).toBeNull();
   docker.composeExit = (args) => (args[0] === "up" ? 1 : 0);
   await service.update("web", {}, null);
   await jobs.idle();
 
-  expect(service.stacks().stacks[0]).toMatchObject({ rollback: { to: "1.0" } });
+  expect(detection.stacks().stacks[0]).toMatchObject({ rollback: { to: "1.0" } });
   docker.composeExit = () => 0;
   const job = await service.rollback("web", "a@b.c");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
-  expect(service.job(job.id)?.status).toBe("success");
-  expect(service.stacks().stacks[0]?.rollback).toBeNull();
+  expect(jobStore.job(job.id)?.status).toBe("success");
+  expect(detection.stacks().stacks[0]?.rollback).toBeNull();
 });
 
 test("a version stack whose only change is a floating sidecar updates like pull mode", async () => {
@@ -267,16 +267,16 @@ test("a version stack whose only change is a floating sidecar updates like pull 
     return 0;
   };
   await check();
-  expect(service.stacks().stacks[0]).toMatchObject({ update: true, button: true, available: null });
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: true, button: true, available: null });
 
   const response = await service.update("app", {}, null);
   expect(response).toEqual({ jobId: expect.any(Number) });
   await jobs.idle();
-  expect(service.history(null).jobs[0]).toMatchObject({ kind: "update", status: "success" });
+  expect(jobStore.history(null).jobs[0]).toMatchObject({ kind: "update", status: "success" });
   expect(await readFile(join(root, "app", ".env"), "utf8")).toBe("APP_TAG=1.0.0\n");
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"], ["up", "-d"]]);
   expect(rollbacks.get("app")).toMatchObject({ to: "l'image précédente", data: { kind: "pull" } });
-  expect(service.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
 });
 
 test("update-all pulls a stopped stack without starting it", async () => {
@@ -284,7 +284,7 @@ test("update-all pulls a stopped stack without starting it", async () => {
   await check();
   const job = service.updateAll(null);
   await jobs.idle();
-  expect(service.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
+  expect(jobStore.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
   expect(jobStore.jobLog(job.id)).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
 });
@@ -297,20 +297,6 @@ test("updateAll runs the planned stacks, refuses when nothing to do", async () =
   expect(job.kind).toBe("update-all");
   expect(job.steps).toEqual([{ stack: "web", status: "pending", from: "1.0", to: "1.1" }]);
   await jobs.idle();
-  expect(service.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
-  expect(service.stacks().stacks[0]?.update).toBe(false);
-});
-
-test("check stores the config error and keeps the previous config", async () => {
-  await makeStack("web", [{ name: "web", image: WEB, rawImage: WEB }]);
-  await makeStack("skipped", []);
-  await writeFile(configPath, "exclude: [skipped]\n");
-  await check();
-  expect(service.stacks()).toMatchObject({ configError: null, lastCheck: NOW.toISOString(), runningJob: null });
-  expect(service.stacks().stacks.map((s) => s.name)).toEqual(["web"]);
-
-  await writeFile(configPath, "exclude: 3\n");
-  await check();
-  expect(service.stacks().configError).toEqual(expect.any(String));
-  expect(service.stacks().stacks.map((s) => s.name)).toEqual(["web"]);
+  expect(jobStore.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
+  expect(detection.stacks().stacks[0]?.update).toBe(false);
 });

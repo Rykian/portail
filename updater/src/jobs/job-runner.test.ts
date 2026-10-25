@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 import type { JobEvent, JobStep } from "@shared/updater-api";
-import { openDatabase } from "./database/database";
-import { BusyError, JobRunner } from "./jobs";
-import { JobStore } from "./jobs/job.store";
+import { openDatabase } from "../database/database";
+import { BusyError, JobRunner } from "./job-runner";
+import { JobStore } from "./job.store";
 
 function setup() {
   const store = new JobStore(openDatabase(":memory:"));

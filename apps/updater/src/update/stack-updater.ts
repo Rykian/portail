@@ -125,11 +125,13 @@ export class StackUpdater {
 
   private async runBeforeCommands(ctx: StackContext): Promise<void> {
     const { stack, config, status, selection, log } = ctx;
-    // A selection's major bump is its own: the stack-level value may come from a service that is not selected.
-    const major = selection === null ? status.major : selectionMajor(status, selection);
-    const runBefore =
-      config.before.length > 0 &&
-      (!config.beforeOnlyOnMajor || major || status.current === null || status.available === null);
+    // A selection is judged on its own services: the stack-level values may come from a service that is not selected.
+    const majorOrUnknown =
+      selection === null
+        ? status.major || status.current === null || status.available === null
+        : selectionMajor(status, selection) ||
+          status.services.some((s) => selection.includes(s.name) && (s.current === null || s.available === null));
+    const runBefore = config.before.length > 0 && (!config.beforeOnlyOnMajor || majorOrUnknown);
     if (!runBefore) return;
     for (const command of config.before) {
       log(`== before: ${command}`);

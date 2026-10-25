@@ -163,7 +163,6 @@ test("a successful update re-checks the stack and records from/to on the step", 
 
 test("pull mode without version: rollback goes to « l'image précédente »", async () => {
   await floatingStack({ local: null, remote: null });
-  registry.detailsByRef.set("linuxserver/web:latest", { version: null, created: null });
   webRunning();
   await check();
   await service.update("web", {}, null);

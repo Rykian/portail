@@ -8,6 +8,9 @@ import type { PullPoint } from "../stacks/rollback.store";
 import type { StackContext } from "../stacks/stack-context";
 import type { PullPlan, UpdateStrategy } from "./strategy";
 
+/** Same format as the portal's image dates. */
+const imageDate = new Intl.DateTimeFormat("fr-FR", { timeZone: "UTC" });
+
 export const rollbackTag = (project: string, service: string): string =>
   `updater-rollback/${project}-${service}:latest`;
 
@@ -45,7 +48,7 @@ export class PullStrategy implements UpdateStrategy<"pull"> {
         stack: stack.name,
         service: service.name,
         image: service.image,
-        to: current ?? checked?.newImageDate ?? "l'image précédente",
+        to: current ?? (await this.runningImageLabel(container.imageId)),
         major: current !== null && available !== null && isMajorBump(current, available),
         running,
       });
@@ -58,6 +61,13 @@ export class PullStrategy implements UpdateStrategy<"pull"> {
       // Nothing to write: the pull of the shared flow brings the new images.
       apply: async () => {},
     };
+  }
+
+  /** What a rollback brings back when the service has no version: the running image, by its creation date if known. */
+  private async runningImageLabel(imageId: string): Promise<string> {
+    const created = (await this.docker.image(imageId))?.created;
+    const date = created ? new Date(created) : null;
+    return date && !Number.isNaN(date.getTime()) ? `l'image du ${imageDate.format(date)}` : "l'image précédente";
   }
 
   /**

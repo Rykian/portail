@@ -537,6 +537,35 @@ test("major and before follow the selection", async () => {
   expect(rollbacks.points("immich")).toContainEqual(point("machine-learning", { major: false }));
 });
 
+test("before with a selection follows the selected services only", async () => {
+  const config = { beforeOnlyOnMajor: true, before: ["backup"] };
+  // Stack-level values are known and minor, but the selected server has no version: before runs.
+  const unknown = { ...immichStatus({ server: { current: null, available: null } }), major: false };
+  await makeUpdater().update(immichCtx({ config, status: unknown, selection: ["server"] }));
+  expect(docker.shellCalls).toEqual([{ dir: immichDir, command: "backup" }]);
+
+  // Stack-level values are unknown, but the selected machine-learning is a known minor bump: before does not run.
+  docker.shellCalls = [];
+  const known = { ...immichStatus({ server: { current: null } }), current: null, available: null, major: false };
+  await makeUpdater().update(immichCtx({ config, status: known, selection: ["machine-learning"] }));
+  expect(docker.shellCalls).toEqual([]);
+});
+
+test("a point without version names the running image by its date, never the new one", async () => {
+  const status = { services: [serviceStatus("app", APP, { newImageDate: "2026-10-20T08:00:00Z" })] };
+  await makeUpdater().update(ctx({ status }));
+  expect(rollbacks.points("stirling")).toMatchObject([{ to: "l'image précédente" }]);
+
+  docker.images.set("sha256:old", {
+    id: "sha256:old",
+    repoDigests: [],
+    version: null,
+    created: "2026-09-01T23:30:00Z",
+  });
+  await makeUpdater().update(ctx({ status }));
+  expect(rollbacks.points("stirling")).toMatchObject([{ to: "l'image du 01/09/2026" }]);
+});
+
 test("progress is reported per image", async () => {
   puller.progressSteps.set(IMMICH.server, [
     [10, 100],

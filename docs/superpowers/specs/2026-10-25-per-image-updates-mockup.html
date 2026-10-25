@@ -1,0 +1,44 @@
+<h2>Version mélangée : sélection + tout mettre à jour</h2>
+<p class="subtitle">Toutes les images à mettre à jour sont cochées par défaut. Décocher permet de n'en faire qu'une partie.</p>
+
+<style>
+  .t { width:100%; border-collapse:collapse; font-size:14px; }
+  .t td, .t th { padding:8px 10px; border-bottom:1px solid rgba(128,128,128,.25); text-align:left; vertical-align:middle; }
+  .t th { font-size:12px; opacity:.7; font-weight:600; }
+  .sub td { font-size:13px; }
+  .sub td:first-child { padding-left:34px; }
+  .muted { opacity:.6; font-size:12px; }
+  .btn { display:inline-block; padding:4px 10px; border-radius:6px; font-size:12px; background:#111; color:#fff; margin:2px 0; }
+  .btn.o { background:transparent; color:inherit; border:1px solid rgba(128,128,128,.5); }
+  .btn.dis { opacity:.35; }
+  .bar { height:6px; background:rgba(128,128,128,.25); border-radius:3px; overflow:hidden; width:140px; display:inline-block; vertical-align:middle; }
+  .bar > i { display:block; height:100%; background:#3b82f6; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:10px; border:1px solid rgba(128,128,128,.4); }
+  .ok { color:#16a34a; }
+</style>
+
+<div class="split">
+  <div class="mockup"><div class="mockup-header">Avant de lancer : j'ai décoché machine-learning</div><div class="mockup-body">
+    <table class="t">
+      <tr><th>Stack</th><th>Version</th><th></th></tr>
+      <tr><td><b>▾ immich</b></td><td>2 images sur 4</td><td><span class="btn">Tout mettre à jour</span><br><span class="btn o">Mettre à jour la sélection (1)</span></td></tr>
+      <tr class="sub"><td>☑ server <span class="tag">latest</span></td><td>v1.140 → v1.141</td><td></td></tr>
+      <tr class="sub"><td>☐ machine-learning <span class="tag">latest</span></td><td>image du 22/10</td><td></td></tr>
+      <tr class="sub"><td>&nbsp;&nbsp;&nbsp;redis <span class="tag">7.4</span></td><td class="muted">version en dur</td><td></td></tr>
+      <tr class="sub"><td>&nbsp;&nbsp;&nbsp;postgres <span class="tag">@sha256</span></td><td class="muted">figée</td><td></td></tr>
+    </table>
+  </div></div>
+
+  <div class="mockup"><div class="mockup-header">Pendant : « Tout mettre à jour »</div><div class="mockup-body">
+    <table class="t">
+      <tr><th>Stack</th><th>Version</th><th></th></tr>
+      <tr><td><b>▾ immich</b></td><td>téléchargement…</td><td><span class="btn dis">Tout mettre à jour</span><br><span class="btn o dis">Mettre à jour la sélection</span></td></tr>
+      <tr class="sub"><td>server <span class="tag">latest</span></td><td>v1.140 → v1.141</td><td><span class="ok">✓ téléchargée</span></td></tr>
+      <tr class="sub"><td>machine-learning <span class="tag">latest</span></td><td>image du 22/10</td><td><span class="bar"><i style="width:27%"></i></span> <span class="muted">27 % · 0,4/1,5 Go</span></td></tr>
+      <tr class="sub"><td>redis <span class="tag">7.4</span></td><td class="muted">version en dur</td><td></td></tr>
+      <tr class="sub"><td>postgres <span class="tag">@sha256</span></td><td class="muted">figée</td><td></td></tr>
+    </table>
+  </div></div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Ensuite : before → pull des images choisies → recréation de leurs conteneurs → santé de toute la stack. Les stacks « variable » n'ont que « Tout mettre à jour ».</p>

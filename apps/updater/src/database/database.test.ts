@@ -31,10 +31,22 @@ const LEGACY_SCHEMA = [
 const tables = (db: Database) =>
   db.query("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all();
 
-test("openDatabase creates exactly the pre-refactor tables", () => {
-  const legacy = new Database(":memory:");
-  for (const statement of LEGACY_SCHEMA) legacy.run(statement);
-  expect(tables(openDatabase(":memory:"))).toEqual(tables(legacy));
+// Tables added since the refactor, on top of the legacy ones.
+const ADDED_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS rollback_points (
+      stack TEXT NOT NULL,
+      service TEXT NOT NULL,
+      json TEXT NOT NULL,
+      PRIMARY KEY (stack, service)
+    )`,
+];
+
+test("openDatabase creates the pre-refactor tables plus rollback_points", () => {
+  const expected = new Database(":memory:");
+  for (const statement of [...LEGACY_SCHEMA, ...ADDED_SCHEMA]) expected.run(statement);
+  const created = tables(openDatabase(":memory:"));
+  expect(created.map((table) => (table as { name: string }).name)).toContain("rollback_points");
+  expect(created).toEqual(tables(expected));
 });
 
 test("reopening an existing file keeps its rows", async () => {

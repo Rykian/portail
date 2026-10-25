@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { DATABASE } from "../database/database";
 
 export type RollbackState = {
@@ -18,9 +18,25 @@ export type RollbackState = {
 export type RollbackData = RollbackState["data"];
 export type RollbackKind = RollbackData["kind"];
 
+/** Rollback point of one pull-style service: replaced by the next update of that service only. */
+export type PullPoint = {
+  stack: string;
+  service: string;
+  image: string;
+  to: string;
+  /** Same meaning as in `RollbackState`, from the update that created this point. */
+  major: boolean;
+  running: boolean;
+};
+
 @Injectable()
-export class RollbackStore {
+export class RollbackStore implements OnModuleInit {
   constructor(@Inject(DATABASE) private readonly db: Database) {}
+
+  onModuleInit(): void {
+    const migrated = this.migrateLegacy();
+    if (migrated > 0) console.warn(`${migrated} retour(s) arrière migré(s) par service`);
+  }
 
   save(state: RollbackState): void {
     this.db
@@ -35,5 +51,40 @@ export class RollbackStore {
 
   delete(stack: string): void {
     this.db.query("DELETE FROM rollbacks WHERE stack = ?").run(stack);
+  }
+
+  points(stack: string): PullPoint[] {
+    const rows = this.db.query("SELECT json FROM rollback_points WHERE stack = ? ORDER BY service").all(stack) as {
+      json: string;
+    }[];
+    return rows.map((row) => JSON.parse(row.json) as PullPoint);
+  }
+
+  savePoint(point: PullPoint): void {
+    this.db
+      .query(
+        "INSERT INTO rollback_points (stack, service, json) VALUES (?, ?, ?) ON CONFLICT(stack, service) DO UPDATE SET json = excluded.json",
+      )
+      .run(point.stack, point.service, JSON.stringify(point));
+  }
+
+  deletePoint(stack: string, service: string): void {
+    this.db.query("DELETE FROM rollback_points WHERE stack = ? AND service = ?").run(stack, service);
+  }
+
+  /** Splits the stack-level `pull` rows written before per-service points into one point per service. */
+  migrateLegacy(): number {
+    return this.db.transaction(() => {
+      const rows = this.db.query("SELECT json FROM rollbacks").all() as { json: string }[];
+      let migrated = 0;
+      for (const row of rows) {
+        const { stack, to, major, running, data } = JSON.parse(row.json) as RollbackState;
+        if (data.kind !== "pull") continue;
+        for (const { service, image } of data.services) this.savePoint({ stack, service, image, to, major, running });
+        this.delete(stack);
+        migrated++;
+      }
+      return migrated;
+    })();
   }
 }

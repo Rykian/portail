@@ -25,5 +25,11 @@ export function openDatabase(file: string): Database {
       PRIMARY KEY (job_id, seq)
     )`);
   db.run("CREATE TABLE IF NOT EXISTS rollbacks (stack TEXT PRIMARY KEY, json TEXT NOT NULL)");
+  db.run(`CREATE TABLE IF NOT EXISTS rollback_points (
+      stack TEXT NOT NULL,
+      service TEXT NOT NULL,
+      json TEXT NOT NULL,
+      PRIMARY KEY (stack, service)
+    )`);
   return db;
 }

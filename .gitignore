@@ -45,3 +45,4 @@ next-env.d.ts
 /playwright-report/
 /updater/node_modules/
 /updater/data/
+/.superpowers/

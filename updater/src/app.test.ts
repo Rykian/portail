@@ -32,6 +32,19 @@ const stub = {
     calls.push(["update", ...args]);
     return updateImpl();
   },
+  check: (user: string | null) => {
+    calls.push(["check", user]);
+    return { id: 8 };
+  },
+  rollback: async (name: string, user: string | null) => {
+    calls.push(["rollback", name, user]);
+    return { id: 9 };
+  },
+  updateAll: (user: string | null) => {
+    calls.push(["updateAll", user]);
+    return { id: 10 };
+  },
+  job: (id: number) => (id === 4 ? { id: 4, kind: "check", status: "success" } : null),
   history: (cursor: number | null) => {
     calls.push(["history", cursor]);
     return { jobs: [], nextCursor: null };
@@ -77,11 +90,11 @@ beforeEach(async () => {
   updateImpl = async () => ({ jobId: 7 });
   const moduleRef = await testModuleBuilder()
     .overrideProvider(DetectionService)
-    .useValue({ stacks: stub.stacks })
+    .useValue({ stacks: stub.stacks, check: stub.check })
     .overrideProvider(UpdateService)
-    .useValue({ update: stub.update })
+    .useValue({ update: stub.update, rollback: stub.rollback, updateAll: stub.updateAll })
     .overrideProvider(JobStore)
-    .useValue({ history: stub.history })
+    .useValue({ history: stub.history, job: stub.job })
     .overrideProvider(JobRunner)
     .useValue({ events: stub.events })
     .overrideProvider(SchedulerService)
@@ -153,6 +166,30 @@ test("POST update validates the body", async () => {
   });
   expect(confirmed.status).toBe(200);
   expect(calls.at(-1)).toEqual(["update", "x", { confirm: true }, null]);
+});
+
+test("POST checks, rollback and updates start jobs for the user", async () => {
+  const post = async (path: string) => {
+    const response = await fetch(`${base}${path}`, { method: "POST", headers: { ...auth, "x-updater-user": "a@b.c" } });
+    expect(response.status).toBe(200);
+    return response.json();
+  };
+  expect(await post("/checks")).toEqual({ jobId: 8 });
+  expect(await post("/stacks/x/rollback")).toEqual({ jobId: 9 });
+  expect(await post("/updates")).toEqual({ jobId: 10 });
+  expect(calls).toEqual([
+    ["check", "a@b.c"],
+    ["rollback", "x", "a@b.c"],
+    ["updateAll", "a@b.c"],
+  ]);
+});
+
+test("GET /jobs/:id returns the job or 404", async () => {
+  const found = await fetch(`${base}/jobs/4`, { headers: auth });
+  expect(found.status).toBe(200);
+  expect(await found.json()).toEqual({ id: 4, kind: "check", status: "success" });
+  expect((await fetch(`${base}/jobs/5`, { headers: auth })).status).toBe(404);
+  expect((await fetch(`${base}/jobs/abc`, { headers: auth })).status).toBe(404);
 });
 
 test("GET /jobs/:id/events streams SSE until end", async () => {

@@ -68,8 +68,8 @@ export class UpdateService {
     }
 
     const step: JobStep = { stack: name, status: "pending", from: status.current, to: status.available };
-    const job = this.jobs.start({ kind: "update", user, steps: [step] }, (ctx) =>
-      this.singleStep(ctx.setSteps, step, () => this.runUpdate(name, ctx.log)),
+    const job = this.jobs.start({ kind: "update", user, steps: [step] }, (job) =>
+      this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log)),
     );
     return { jobId: job.id };
   }

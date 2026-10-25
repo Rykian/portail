@@ -20,7 +20,7 @@ export type Plan<K extends RollbackKind = RollbackKind> = {
 export interface UpdateStrategy<K extends RollbackKind = RollbackKind> {
   /** The `data.kind` its rollbacks are stored under. */
   readonly kind: K;
-  /** Checks the target and returns the plan. Fails (via `fail`) before any file change. */
+  /** Checks the target, saves what a rollback needs (the pull strategy tags images) and returns the plan. Fails (via `fail`) before any file change. */
   prepare(ctx: StackContext, before: ContainerState[]): Promise<Plan<K>>;
   /** Text the user confirms before applying; only Authentik minor has one. */
   preview?(ctx: StackContext): Promise<string>;

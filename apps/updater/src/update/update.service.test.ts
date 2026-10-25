@@ -2,14 +2,17 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Database } from "bun:sqlite";
 import type { TestingModule } from "@nestjs/testing";
-import { beforeEach, expect, test } from "vitest";
-import { BadRequestError, NotFoundError } from "../common/errors";
+import type { JobTarget, StackStatus } from "@portail/shared/updater-api";
+import { beforeEach, expect, test, vi } from "vitest";
+import { BadRequestError, ConflictError, NotFoundError } from "../common/errors";
 import { openDatabase } from "../database/database";
 import { DetectionService } from "../detection/detection.service";
 import type { ComposeService } from "../docker/docker";
 import { JobRunner } from "../jobs/job-runner";
 import { JobStore } from "../jobs/job.store";
 import { RollbackStore } from "../stacks/rollback.store";
+import { StackStatusStore } from "../stacks/stack-status.store";
+import { VersionStrategy } from "../strategies/version.strategy";
 import { FakeDocker, FakeImagePuller, FakeRegistry, tempDir } from "../test/fakes";
 import { testModule } from "../test/module";
 import { UpdateService } from "./update.service";
@@ -155,7 +158,7 @@ test("a successful update re-checks the stack and records from/to on the step", 
 
   const job = jobStore.job(response.jobId);
   expect(job).toMatchObject({ kind: "update", user: "a@b.c", status: "success" });
-  expect(job?.steps[0]).toEqual({ stack: "web", status: "success", from: "1.0", to: "1.1" });
+  expect(job?.steps[0]).toEqual({ stack: "web", status: "success", from: "1.0", to: "1.1", services: ["web"] });
   const web = detection.stacks().stacks.find((s) => s.name === "web");
   expect(web).toMatchObject({ update: false });
   expect(rollbacks.points("web")).toMatchObject([{ service: "web", to: "1.0" }]);
@@ -235,12 +238,12 @@ test("rollback needs a rollback state, then restores and re-checks", async () =>
   await floatingStack({ local: "1.0", remote: "1.1" });
   webRunning();
   await check();
-  await expect(service.rollback("web", null)).rejects.toBeInstanceOf(BadRequestError);
-  await expect(service.rollback("nope", null)).rejects.toBeInstanceOf(NotFoundError);
+  await expect(service.rollback("web", {}, null)).rejects.toBeInstanceOf(BadRequestError);
+  await expect(service.rollback("nope", {}, null)).rejects.toBeInstanceOf(NotFoundError);
   await service.update("web", {}, null);
   await jobs.idle();
 
-  const job = await service.rollback("web", "a@b.c");
+  const job = await service.rollback("web", {}, "a@b.c");
   expect(job.kind).toBe("rollback");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
@@ -261,7 +264,7 @@ test("a failed update exposes the rollback saved for it, and rollback() starts a
 
   expect(rollbacks.points("web")).toMatchObject([{ service: "web", to: "1.0" }]);
   docker.composeExit = () => 0;
-  const job = await service.rollback("web", "a@b.c");
+  const job = await service.rollback("web", {}, "a@b.c");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
   expect(jobStore.job(job.id)?.status).toBe("success");
@@ -314,7 +317,7 @@ test("a version stack whose only change is a floating sidecar updates like pull 
 test("update-all downloads a stopped stack without starting it", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
   await check();
-  const job = service.updateAll(null);
+  const job = await service.updateAll(null);
   await jobs.idle();
   expect(jobStore.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
   expect(puller.calls).toEqual([{ image: WEB, platform: null }]);
@@ -324,12 +327,370 @@ test("update-all downloads a stopped stack without starting it", async () => {
 
 test("updateAll runs the planned stacks, refuses when nothing to do", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
-  expect(() => service.updateAll(null)).toThrow(new BadRequestError("Aucune mise à jour à appliquer"));
+  await expect(service.updateAll(null)).rejects.toThrow(new BadRequestError("Aucune mise à jour à appliquer"));
   await check();
-  const job = service.updateAll("a@b.c");
+  const job = await service.updateAll("a@b.c");
   expect(job.kind).toBe("update-all");
-  expect(job.steps).toEqual([{ stack: "web", status: "pending", from: "1.0", to: "1.1" }]);
+  expect(job.steps).toEqual([{ stack: "web", status: "pending", from: "1.0", to: "1.1", services: ["web"] }]);
   await jobs.idle();
   expect(jobStore.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
   expect(detection.stacks().stacks[0]?.update).toBe(false);
+});
+
+/** Holds the queue with a running job until the returned function is called. */
+function gate(targets: JobTarget[] = []): () => void {
+  let release = () => {};
+  jobs.start(
+    { kind: "check", user: null, steps: [], targets },
+    () => new Promise((resolve) => (release = () => resolve("success"))),
+  );
+  return () => release();
+}
+
+/** Replaces part of a stack's stored status, like a check that found something else. */
+function changeStatus(name: string, change: (status: StackStatus) => StackStatus) {
+  const store = moduleRef.get(StackStatusStore);
+  const status = store.stackStatuses().find((s) => s.name === name)!;
+  store.saveStackStatus(change(status));
+}
+
+const SERVER = "ghcr.io/immich-app/immich-server:release";
+const ML = "ghcr.io/immich-app/immich-machine-learning:release";
+const REDIS = "redis:latest";
+
+/** A pull stack: `server` has a major bump, `machine-learning` a minor one, `redis` is up to date. */
+async function immichStack() {
+  await makeStack("immich", [
+    { name: "server", image: SERVER, rawImage: SERVER, pullPolicy: null, platform: null },
+    { name: "machine-learning", image: ML, rawImage: ML, pullPolicy: null, platform: null },
+    { name: "redis", image: REDIS, rawImage: REDIS, pullPolicy: null, platform: null },
+  ]);
+  const images = [
+    { image: SERVER, repository: "immich-app/immich-server", from: "1.0.0", to: "2.0.0" },
+    { image: ML, repository: "immich-app/immich-machine-learning", from: "1.0.0", to: "1.1.0" },
+  ];
+  for (const { image, repository, from, to } of images) {
+    docker.images.set(image, {
+      id: `${image}-old`,
+      repoDigests: [`ghcr.io/${repository}@sha256:old`],
+      version: from,
+      created: null,
+    });
+    registry.digests.set(`${repository}:release`, "sha256:new");
+    registry.detailsByRef.set(`${repository}:release`, { version: to, created: "2026-10-01T00:00:00Z" });
+  }
+  docker.images.set(REDIS, { id: "redis", repoDigests: ["redis@sha256:same"], version: null, created: null });
+  registry.digests.set("library/redis:latest", "sha256:same");
+  docker.containersByDir.set(join(root, "immich"), [
+    { service: "server", state: "running", exitCode: 0, health: null, imageId: `${SERVER}-old` },
+    { service: "machine-learning", state: "running", exitCode: 0, health: null, imageId: `${ML}-old` },
+    { service: "redis", state: "running", exitCode: 0, health: null, imageId: "redis" },
+  ]);
+  puller.onPull = (image) => {
+    const pulled = images.find((i) => i.image === image);
+    if (pulled) {
+      docker.images.set(image, {
+        id: `${image}-new`,
+        repoDigests: [`ghcr.io/${pulled.repository}@sha256:new`],
+        version: pulled.to,
+        created: null,
+      });
+    }
+  };
+}
+
+const MEALIE = "ghcr.io/mealie-recipes/mealie";
+
+/** A version stack from v3.4.0 to v3.5.0; once the new image is pulled, compose resolves it. */
+async function mealieStack() {
+  const dir = await makeStack(
+    "mealie",
+    [
+      {
+        name: "mealie",
+        image: `${MEALIE}:v3.4.0`,
+        rawImage: `${MEALIE}:\${VERSION}`,
+        pullPolicy: null,
+        platform: null,
+      },
+    ],
+    { ".env": "VERSION=v3.4.0\n" },
+  );
+  registry.tagsByRepository.set("mealie-recipes/mealie", ["v3.4.0", "v3.5.0"]);
+  const previous = puller.onPull;
+  puller.onPull = (image) => {
+    previous(image);
+    if (image.startsWith(MEALIE)) {
+      docker.services.set(dir, [
+        {
+          name: "mealie",
+          image: `${MEALIE}:v3.5.0`,
+          rawImage: `${MEALIE}:\${VERSION}`,
+          pullPolicy: null,
+          platform: null,
+        },
+      ]);
+    }
+  };
+  return dir;
+}
+
+const MEALIE_CONFIG = "stacks:\n  mealie:\n    version: { file: .env, variable: VERSION }\n";
+
+test("services on a stack that does not allow a selection → 400", async () => {
+  await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  await expect(service.update("mealie", { services: ["mealie"] }, null)).rejects.toThrow(
+    new BadRequestError("Mise à jour par image impossible pour mealie"),
+  );
+});
+
+test("empty selection → 400", async () => {
+  await immichStack();
+  await check();
+  await expect(service.update("immich", { services: [] }, null)).rejects.toBeInstanceOf(BadRequestError);
+  expect(jobStore.history(null).jobs.filter((j) => j.kind === "update")).toEqual([]);
+});
+
+test("unknown or not selectable service → 400", async () => {
+  await immichStack();
+  await check();
+  await expect(service.update("immich", { services: ["server", "nope"] }, null)).rejects.toThrow(
+    new BadRequestError("Service non sélectionnable : nope"),
+  );
+  await expect(service.update("immich", { services: ["redis"] }, null)).rejects.toThrow(
+    new BadRequestError("Service non sélectionnable : redis"),
+  );
+});
+
+test("without services, a pull stack updates every selectable service", async () => {
+  await immichStack();
+  await check();
+  const response = await service.update("immich", {}, null);
+  expect(response).toEqual({
+    needsConfirm: { from: null, to: "server, machine-learning", diff: null, warning: null },
+  });
+  const started = await service.update("immich", { confirm: true }, null);
+  if (!("jobId" in started)) throw new Error("expected a job");
+  expect(jobStore.job(started.jobId)?.steps[0]).toMatchObject({
+    stack: "immich",
+    from: null,
+    to: "server, machine-learning",
+    services: ["server", "machine-learning"],
+  });
+  await jobs.idle();
+  expect(jobStore.job(started.jobId)?.status).toBe("success");
+  expect(puller.calls.map((c) => c.image)).toEqual([SERVER, ML]);
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d", "--no-deps", "server", "machine-learning"]]);
+});
+
+test("needsConfirm of a selection is computed on the selection", async () => {
+  await immichStack();
+  await check();
+  expect(detection.stacks().stacks[0]).toMatchObject({ major: true, needsConfirm: true });
+
+  const response = await service.update("immich", { services: ["machine-learning"] }, null);
+  if (!("jobId" in response)) throw new Error("expected a job");
+  expect(jobStore.job(response.jobId)?.steps[0]).toMatchObject({
+    stack: "immich",
+    from: "1.0.0",
+    to: "1.1.0",
+    services: ["machine-learning"],
+  });
+  await jobs.idle();
+  expect(jobStore.job(response.jobId)?.status).toBe("success");
+  expect(puller.calls.map((c) => c.image)).toEqual([ML]);
+
+  expect(await service.update("immich", { services: ["server"] }, null)).toEqual({
+    needsConfirm: { from: "1.0.0", to: "2.0.0", diff: null, warning: null },
+  });
+});
+
+test("a target changed by a check queued in between fails the step", async () => {
+  const dir = await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const release = gate();
+  const response = await service.update("mealie", { confirm: true }, null);
+  if (!("jobId" in response)) throw new Error("expected a job");
+  changeStatus("mealie", (status) => ({ ...status, available: "v4.0.0", major: true, needsConfirm: true }));
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(response.jobId)).toMatchObject({ status: "failed", steps: [{ status: "failed" }] });
+  expect(jobStore.jobLog(response.jobId)).toContain(
+    "la cible a changé depuis la demande (v3.5.0 → v4.0.0) : relancer la mise à jour",
+  );
+  expect(await readFile(join(dir, ".env"), "utf8")).toBe("VERSION=v3.4.0\n");
+});
+
+test("a queued sidecar update fails when the version variable gets a target", async () => {
+  const sidecar = "postgres:16-alpine";
+  await makeStack(
+    "app",
+    [
+      {
+        name: "app",
+        image: "ghcr.io/acme/app:1.0.0",
+        rawImage: "ghcr.io/acme/app:${APP_TAG}",
+        pullPolicy: null,
+        platform: null,
+      },
+      { name: "db", image: sidecar, rawImage: sidecar, pullPolicy: null, platform: null },
+    ],
+    { ".env": "APP_TAG=1.0.0\n" },
+  );
+  await writeFile(configPath, "stacks:\n  app:\n    version: { file: .env, variable: APP_TAG }\n");
+  registry.tagsByRepository.set("acme/app", ["1.0.0"]);
+  registry.digests.set("library/postgres:16-alpine", "sha256:new");
+  docker.images.set(sidecar, { id: "old", repoDigests: ["postgres@sha256:old"], version: null, created: null });
+  await check();
+  const release = gate();
+  const response = await service.update("app", {}, null);
+  if (!("jobId" in response)) throw new Error("expected a job");
+  expect(jobStore.job(response.jobId)?.steps[0]).toMatchObject({ services: ["db"] });
+  changeStatus("app", (status) => ({ ...status, available: "1.1.0" }));
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(response.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(response.jobId)).toContain(
+    "la cible a changé depuis la demande (aucune → 1.1.0) : relancer la mise à jour",
+  );
+  expect(puller.calls).toEqual([]);
+});
+
+test("a queued update that now needs a confirmation fails the step", async () => {
+  await immichStack();
+  await check();
+  const release = gate();
+  const response = await service.update("immich", { services: ["machine-learning"] }, null);
+  if (!("jobId" in response)) throw new Error("expected a job");
+  await writeFile(configPath, "stacks:\n  immich:\n    confirm: true\n");
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(response.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(response.jobId)).toContain(
+    "une confirmation est maintenant nécessaire : relancer la mise à jour",
+  );
+  expect(puller.calls).toEqual([]);
+});
+
+test("a second queued update of a done stack succeeds with nothing left to do", async () => {
+  await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const prepare = vi.spyOn(moduleRef.get(VersionStrategy), "prepare");
+  const release = gate();
+  const first = await service.update("mealie", {}, null);
+  const second = await service.update("mealie", {}, null);
+  if (!("jobId" in first) || !("jobId" in second)) throw new Error("expected jobs");
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(first.jobId)?.status).toBe("success");
+  expect(jobStore.job(second.jobId)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
+  expect(jobStore.jobLog(second.jobId)).toEqual(["rien à faire : déjà à jour"]);
+  expect(prepare).toHaveBeenCalledTimes(1);
+});
+
+test("rollback while the stack has a queued or running job → 409", async () => {
+  await floatingStack({ local: "1.0", remote: "1.1" });
+  webRunning();
+  await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  await service.update("web", {}, null);
+  await jobs.idle();
+  rollbacks.save({
+    stack: "mealie",
+    to: "v3.3.0",
+    major: false,
+    running: false,
+    data: { kind: "version", file: ".env", variable: "VERSION", value: "v3.3.0" },
+  });
+  const conflict = (stack: string) =>
+    new ConflictError(`Une tâche est déjà prévue pour ${stack}, attends qu'elle se termine`);
+
+  const release = gate();
+  // A job that names no stack (a check) does not block a rollback.
+  const queued = await service.rollback("web", {}, null);
+  expect(jobStore.job(queued.id)?.status).toBe("queued");
+  await expect(service.rollback("web", {}, null)).rejects.toThrow(conflict("web"));
+  await expect(service.rollback("web", { service: "web" }, null)).rejects.toThrow(conflict("web"));
+  // A queued update-all names every stack it plans.
+  await service.updateAll(null);
+  await expect(service.rollback("mealie", {}, null)).rejects.toThrow(conflict("mealie"));
+  release();
+  await jobs.idle();
+
+  const releaseRunning = gate([{ stack: "mealie", services: null }]);
+  await expect(service.rollback("mealie", {}, null)).rejects.toBeInstanceOf(ConflictError);
+  releaseRunning();
+  await jobs.idle();
+});
+
+test("rollback of one service needs its point", async () => {
+  await immichStack();
+  await check();
+  await service.update("immich", { confirm: true }, null);
+  await jobs.idle();
+  expect(rollbacks.points("immich").map((p) => p.service)).toEqual(["machine-learning", "server"]);
+
+  await expect(service.rollback("immich", { service: "redis" }, null)).rejects.toThrow(
+    new BadRequestError("Aucun retour arrière disponible pour immich/redis"),
+  );
+  const job = await service.rollback("immich", { service: "machine-learning" }, null);
+  expect(job.steps[0]).toMatchObject({ stack: "immich", to: "1.0.0", services: ["machine-learning"] });
+  await jobs.idle();
+  expect(jobStore.job(job.id)?.status).toBe("success");
+  expect(rollbacks.points("immich").map((p) => p.service)).toEqual(["server"]);
+});
+
+test("rollback without service takes every point", async () => {
+  await immichStack();
+  await check();
+  await service.update("immich", { confirm: true }, null);
+  await jobs.idle();
+
+  const job = await service.rollback("immich", {}, null);
+  expect(job.steps[0]).toMatchObject({ stack: "immich", to: "1.0.0, 1.0.0", services: ["machine-learning", "server"] });
+  await jobs.idle();
+  expect(jobStore.job(job.id)?.status).toBe("success");
+  expect(rollbacks.points("immich")).toEqual([]);
+});
+
+test("update-all pins the planned targets", async () => {
+  await floatingStack({ local: "1.0", remote: "1.1" });
+  webRunning();
+  await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const release = gate();
+  const job = await service.updateAll(null);
+  expect(job.steps).toEqual([
+    { stack: "mealie", status: "pending", from: "v3.4.0", to: "v3.5.0" },
+    { stack: "web", status: "pending", from: "1.0", to: "1.1", services: ["web"] },
+  ]);
+  // A check queued in between found a newer web image: web must not take it.
+  changeStatus("web", (status) => ({
+    ...status,
+    services: status.services.map((s) => ({ ...s, available: "1.2" })),
+  }));
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(job.id)).toMatchObject({
+    status: "failed",
+    steps: [
+      { stack: "mealie", status: "success" },
+      { stack: "web", status: "failed" },
+    ],
+  });
+  expect(jobStore.jobLog(job.id)).toContain(
+    "la cible a changé depuis la demande (1.1 → 1.2) : relancer la mise à jour",
+  );
+  expect(puller.calls.map((c) => c.image)).toEqual([`${MEALIE}:v3.4.0`]);
 });

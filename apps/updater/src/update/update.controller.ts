@@ -1,5 +1,10 @@
 import { Body, Controller, Headers, HttpCode, Inject, Param, Post } from "@nestjs/common";
-import { updateBodySchema, type StartResponse, type UpdateResponse } from "@portail/shared/updater-api";
+import {
+  rollbackBodySchema,
+  updateBodySchema,
+  type StartResponse,
+  type UpdateResponse,
+} from "@portail/shared/updater-api";
 import { BadRequestError } from "../common/errors";
 import { UpdateService } from "./update.service";
 
@@ -21,13 +26,19 @@ export class UpdateController {
 
   @Post("stacks/:name/rollback")
   @HttpCode(200)
-  async rollback(@Param("name") name: string, @Headers("x-updater-user") user?: string): Promise<StartResponse> {
-    return { jobId: (await this.service.rollback(name, user ?? null)).id };
+  async rollback(
+    @Param("name") name: string,
+    @Body() body: unknown,
+    @Headers("x-updater-user") user?: string,
+  ): Promise<StartResponse> {
+    const parsed = rollbackBodySchema.safeParse(body ?? {});
+    if (!parsed.success) throw new BadRequestError("Requête invalide");
+    return { jobId: (await this.service.rollback(name, parsed.data, user ?? null)).id };
   }
 
   @Post("updates")
   @HttpCode(200)
-  updateAll(@Headers("x-updater-user") user?: string): StartResponse {
-    return { jobId: this.service.updateAll(user ?? null).id };
+  async updateAll(@Headers("x-updater-user") user?: string): Promise<StartResponse> {
+    return { jobId: (await this.service.updateAll(user ?? null)).id };
   }
 }

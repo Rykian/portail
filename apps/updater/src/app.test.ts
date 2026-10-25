@@ -17,6 +17,7 @@ let app: INestApplication;
 let base: string;
 let calls: unknown[][];
 let updateImpl: () => Promise<unknown>;
+let rollbackImpl: () => Promise<unknown>;
 let returned: boolean;
 let release = () => {};
 
@@ -36,9 +37,9 @@ const stub = {
     calls.push(["check", user]);
     return { id: 8 };
   },
-  rollback: async (name: string, user: string | null) => {
-    calls.push(["rollback", name, user]);
-    return { id: 9 };
+  rollback: (...args: unknown[]) => {
+    calls.push(["rollback", ...args]);
+    return rollbackImpl();
   },
   updateAll: (user: string | null) => {
     calls.push(["updateAll", user]);
@@ -88,6 +89,7 @@ beforeEach(async () => {
   calls = [];
   returned = false;
   updateImpl = async () => ({ jobId: 7 });
+  rollbackImpl = async () => ({ id: 9 });
   const moduleRef = await testModuleBuilder()
     .overrideProvider(DetectionService)
     .useValue({ stacks: stub.stacks, check: stub.check })
@@ -135,14 +137,6 @@ test("POST update maps errors and passes the user", async () => {
   expect(calls).toEqual([["update", "x", {}, "a@b.c"]]);
 
   updateImpl = async () => {
-    throw new ConflictError("Une tâche est déjà prévue pour x, attends qu'elle se termine");
-  };
-  const conflict = await fetch(`${base}/stacks/x/update`, { method: "POST", headers: auth });
-  expect(conflict.status).toBe(409);
-  expect(await conflict.json()).toEqual({ error: "Une tâche est déjà prévue pour x, attends qu'elle se termine" });
-  expect(calls[1]).toEqual(["update", "x", {}, null]);
-
-  updateImpl = async () => {
     throw new NotFoundError("Stack inconnue : x");
   };
   const missing = await fetch(`${base}/stacks/x/update`, { method: "POST", headers: auth });
@@ -179,9 +173,63 @@ test("POST checks, rollback and updates start jobs for the user", async () => {
   expect(await post("/updates")).toEqual({ jobId: 10 });
   expect(calls).toEqual([
     ["check", "a@b.c"],
-    ["rollback", "x", "a@b.c"],
+    ["rollback", "x", {}, "a@b.c"],
     ["updateAll", "a@b.c"],
   ]);
+});
+
+test("POST update accepts services, POST rollback accepts service, both reject unknown keys", async () => {
+  const post = (path: string, body: unknown) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  expect((await post("/stacks/x/update", { services: ["server"] })).status).toBe(200);
+  expect((await post("/stacks/x/rollback", { service: "server" })).status).toBe(200);
+  expect(calls).toEqual([
+    ["update", "x", { services: ["server"] }, null],
+    ["rollback", "x", { service: "server" }, null],
+  ]);
+
+  for (const path of ["/stacks/x/update", "/stacks/x/rollback"]) {
+    const response = await post(path, { service: "server", services: ["server"] });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Requête invalide" });
+  }
+  expect(calls).toHaveLength(2);
+});
+
+test("POST rollback maps a conflict to 409", async () => {
+  rollbackImpl = async () => {
+    throw new ConflictError("Une tâche est déjà prévue pour x, attends qu'elle se termine");
+  };
+  const conflict = await fetch(`${base}/stacks/x/rollback`, { method: "POST", headers: auth });
+  expect(conflict.status).toBe(409);
+  expect(await conflict.json()).toEqual({ error: "Une tâche est déjà prévue pour x, attends qu'elle se termine" });
+});
+
+test("a request while a job runs is queued (200 with jobId)", async () => {
+  const moduleRef = await testModuleBuilder().overrideProvider(SchedulerService).useValue({}).compile();
+  const real = moduleRef.createNestApplication({ logger: ["error", "warn"] });
+  await real.listen(0, "127.0.0.1");
+  try {
+    const url = (await real.getUrl()).replace("[::1]", "127.0.0.1");
+    const jobs = moduleRef.get(JobRunner);
+    let releaseJob = () => {};
+    jobs.start(
+      { kind: "check", user: null, steps: [], targets: [] },
+      () => new Promise((resolve) => (releaseJob = () => resolve("success"))),
+    );
+    const response = await fetch(`${url}/checks`, { method: "POST", headers: auth });
+    expect(response.status).toBe(200);
+    const { jobId } = (await response.json()) as { jobId: number };
+    expect(moduleRef.get(JobStore).job(jobId)?.status).toBe("queued");
+    releaseJob();
+    await jobs.idle();
+  } finally {
+    await real.close();
+  }
 });
 
 test("GET /jobs/:id returns the job or 404", async () => {

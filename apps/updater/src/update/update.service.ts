@@ -1,15 +1,18 @@
 import { Inject, Injectable } from "@nestjs/common";
 import {
   MIGRATION_WARNING,
+  type ImageProgress,
   type Job,
   type JobStep,
+  type RollbackBody,
   type StackStatus,
   type UpdateBody,
   type UpdateResponse,
 } from "@portail/shared/updater-api";
-import { BadRequestError, messageOf, NotFoundError } from "../common/errors";
+import { unique } from "remeda";
+import { BadRequestError, ConflictError, messageOf, NotFoundError } from "../common/errors";
 import { ENV, type Env } from "../common/runtime";
-import { stackConfig, type UpdaterConfig } from "../config/config";
+import { stackConfig, type StackConfig, type UpdaterConfig } from "../config/config";
 import { ConfigService } from "../config/config.service";
 import { DetectionService } from "../detection/detection.service";
 import type { LogSink } from "../docker/docker";
@@ -18,8 +21,9 @@ import { discoverStacks, type DiscoveredStack } from "../stacks/discovery";
 import { RollbackStore } from "../stacks/rollback.store";
 import type { StackContext } from "../stacks/stack-context";
 import { StackStatusStore } from "../stacks/stack-status.store";
-import { Strategies } from "../strategies/strategies";
+import { selectableServices, selectionMajor, Strategies } from "../strategies/strategies";
 import { StackUpdater } from "./stack-updater";
+import { pinTarget, staleReason, type PinnedTarget } from "./target";
 import { planUpdateAll, runUpdateAll } from "./update-all";
 
 type Result = "success" | "failed";
@@ -38,15 +42,24 @@ export class UpdateService {
     @Inject(JobRunner) private readonly jobs: JobRunner,
   ) {}
 
-  /** Starts the update, or answers what the user must confirm first (with the compose diff when there is one). */
+  /** Starts or queues the update, or answers what the user must confirm first (with the compose diff when there is one). */
   async update(name: string, body: UpdateBody, user: string | null): Promise<UpdateResponse> {
     const { stack, status, config } = await this.lookup(name);
     if (!status.update || !status.button || status.error !== null) {
       throw new BadRequestError(`Aucune mise à jour applicable pour ${name}`);
     }
+    const cfg = stackConfig(config, name);
+    const selection = this.selection(status, cfg, body.services);
 
     let diff: string | null = null;
-    const ctx = this.context(stack, config, status, () => {});
+    const ctx = this.context(
+      stack,
+      config,
+      status,
+      selection,
+      () => {},
+      () => {},
+    );
     const strategy = this.strategies.forUpdate(status, ctx.config);
     if (strategy.preview) {
       try {
@@ -56,49 +69,86 @@ export class UpdateService {
       }
     }
 
-    if (status.needsConfirm && body.confirm !== true) {
+    const { from, to } = this.fromTo(status, selection);
+    if (this.needsConfirm(status, cfg, selection) && body.confirm !== true) {
       return {
         needsConfirm: {
-          from: status.current,
-          to: status.available,
+          from,
+          to,
           diff,
           warning: status.confirm || status.recipe !== null ? MIGRATION_WARNING : null,
         },
       };
     }
 
-    const step: JobStep = { stack: name, status: "pending", from: status.current, to: status.available };
+    const step: JobStep = { stack: name, status: "pending", from, to, ...(selection ? { services: selection } : {}) };
+    const pinned = pinTarget(status, selection, body.confirm === true);
     const job = this.jobs.start(
-      { kind: "update", user, steps: [step], targets: [{ stack: name, services: null }] },
-      (job) => this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log)),
+      { kind: "update", user, steps: [step], targets: [{ stack: name, services: selection }] },
+      (job) => this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log, job.progress, pinned)),
     );
     return { jobId: job.id };
   }
 
-  async rollback(name: string, user: string | null): Promise<Job> {
+  /** Rolls back one service's point, or everything the stack can roll back; never queued behind work on that stack. */
+  async rollback(name: string, body: RollbackBody, user: string | null): Promise<Job> {
     const { status } = await this.lookup(name);
-    const saved = this.rollbacks.get(name);
-    const points = this.rollbacks.points(name);
-    if (!saved && points.length === 0) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
-    const to = saved?.to ?? points.map((p) => p.to).join(", ");
-    const step: JobStep = { stack: name, status: "pending", from: status.current, to };
+    // The point restored must be the one the user saw: a job on this stack could replace it before the rollback runs.
+    if (this.jobs.pending().some((job) => job.targets.some((target) => target.stack === name))) {
+      throw new ConflictError(`Une tâche est déjà prévue pour ${name}, attends qu'elle se termine`);
+    }
+    const service = body.service ?? null;
+    const saved = service === null ? this.rollbacks.get(name) : null;
+    const points = saved ? [] : this.rollbacks.points(name).filter((p) => service === null || p.service === service);
+    if (!saved && points.length === 0) {
+      throw new BadRequestError(
+        `Aucun retour arrière disponible pour ${service === null ? name : `${name}/${service}`}`,
+      );
+    }
+    const step: JobStep = {
+      stack: name,
+      status: "pending",
+      from: service === null ? status.current : (status.services.find((s) => s.name === service)?.current ?? null),
+      to: saved?.to ?? points.map((p) => p.to).join(", "),
+      ...(saved ? {} : { services: points.map((p) => p.service) }),
+    };
     return this.jobs.start(
-      { kind: "rollback", user, steps: [step], targets: [{ stack: name, services: null }] },
-      (ctx) => this.singleStep(ctx.setSteps, step, () => this.runRollback(name, ctx.log)),
+      {
+        kind: "rollback",
+        user,
+        steps: [step],
+        targets: [{ stack: name, services: service === null ? null : [service] }],
+      },
+      (ctx) => this.singleStep(ctx.setSteps, step, () => this.runRollback(name, service, ctx.log)),
     );
   }
 
-  updateAll(user: string | null): Job {
+  /** Queues every applicable update; each stack's target is pinned now, as for a single update. */
+  async updateAll(user: string | null): Promise<Job> {
     const statuses = this.statuses.stackStatuses();
     const queue = planUpdateAll(statuses);
     if (queue.length === 0) throw new BadRequestError("Aucune mise à jour à appliquer");
-    const steps: JobStep[] = queue.map((name) => {
-      const status = statuses.find((s) => s.name === name);
-      return { stack: name, status: "pending", from: status?.current ?? null, to: status?.available ?? null };
+    const { config } = await this.config.load();
+    const planned = queue.map((name) => {
+      const status = statuses.find((s) => s.name === name)!;
+      const cfg = stackConfig(config, name);
+      const selection = this.selection(status, cfg, undefined);
+      const { from, to } = this.fromTo(status, selection);
+      const step: JobStep = { stack: name, status: "pending", from, to, ...(selection ? { services: selection } : {}) };
+      // Update-all picks stacks on their stack-level needsConfirm (no confirmation is asked): a need already there
+      // when planned is accepted as before, only one that appears before the stack runs stops it.
+      const pinned = pinTarget(status, selection, this.needsConfirm(status, cfg, selection));
+      return { step, pinned, target: { stack: name, services: selection } };
     });
-    const targets = queue.map((stack) => ({ stack, services: null }));
+    const steps = planned.map((p) => p.step);
+    const targets = planned.map((p) => p.target);
     return this.jobs.start({ kind: "update-all", user, steps, targets }, (ctx) =>
-      runUpdateAll(queue, (name, log) => this.runUpdate(name, log), ctx, steps),
+      runUpdateAll(
+        queue,
+        (name, log) => this.runUpdate(name, log, ctx.progress, planned.find((p) => p.pinned.stack === name)!.pinned),
+        ctx,
+        steps,
+      ),
     );
   }
 
@@ -111,9 +161,44 @@ export class UpdateService {
     return { stack, status, config };
   }
 
-  private context(stack: DiscoveredStack, config: UpdaterConfig, status: StackStatus, log: LogSink): StackContext {
-    // Selections and progress relay are wired with the API (Task 6): until then a pull-style update takes every selectable service.
-    return { stack, config: stackConfig(config, stack.name), status, selection: null, log, progress: () => {} };
+  private context(
+    stack: DiscoveredStack,
+    config: UpdaterConfig,
+    status: StackStatus,
+    selection: string[] | null,
+    log: LogSink,
+    progress: (p: ImageProgress) => void,
+  ): StackContext {
+    return { stack, config: stackConfig(config, stack.name), status, selection, log, progress };
+  }
+
+  /**
+   * The services a request targets: the ones named (all selectable, or 400), else every selectable service of a
+   * pull-style stack, else null (version/recipe update of the whole stack).
+   */
+  private selection(status: StackStatus, config: StackConfig, services: string[] | undefined): string[] | null {
+    const selectable = selectableServices(status, config);
+    if (services === undefined) return selectable.length > 0 ? selectable : null;
+    if (selectable.length === 0) throw new BadRequestError(`Mise à jour par image impossible pour ${status.name}`);
+    if (services.length === 0) throw new BadRequestError(`Aucune image sélectionnée pour ${status.name}`);
+    const unknown = services.find((s) => !selectable.includes(s));
+    if (unknown !== undefined) throw new BadRequestError(`Service non sélectionnable : ${unknown}`);
+    return unique(services);
+  }
+
+  /** A selection is judged on its own services: the stack-level values may come from a service that is not selected. */
+  private needsConfirm(status: StackStatus, config: StackConfig, selection: string[] | null): boolean {
+    return selection === null ? status.needsConfirm : config.confirm || selectionMajor(status, selection);
+  }
+
+  /** Shown on the confirmation and the step: one service's versions, or the names of the selected services. */
+  private fromTo(status: StackStatus, selection: string[] | null): { from: string | null; to: string | null } {
+    if (selection === null) return { from: status.current, to: status.available };
+    if (selection.length === 1) {
+      const service = status.services.find((s) => s.name === selection[0]);
+      return { from: service?.current ?? null, to: service?.available ?? null };
+    }
+    return { from: null, to: selection.join(", ") };
   }
 
   /** Shows the one step of a job as running while `run` works, then as its result. */
@@ -132,19 +217,42 @@ export class UpdateService {
     return result;
   }
 
-  /** Runs one stack's update with fresh config and status, then re-checks it on success. */
-  private async runUpdate(name: string, log: LogSink): Promise<Result> {
+  /**
+   * Runs one stack's update with fresh config and status, then re-checks it on success. What runs is what was pinned
+   * at queue time: nothing when it is already done, a failure when the target changed or now needs a confirmation.
+   */
+  private async runUpdate(
+    name: string,
+    log: LogSink,
+    progress: (p: ImageProgress) => void,
+    pinned: PinnedTarget,
+  ): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
-    const ctx = this.context(stack, config, status, log);
+    const cfg = stackConfig(config, name);
+    // Pinned services already brought up to date (e.g. by an earlier queued job) are left out.
+    const selection =
+      pinned.services.length === 0
+        ? null
+        : pinned.services.filter((p) => status.services.some((s) => s.name === p.name && s.update)).map((p) => p.name);
+    if (selection === null ? !status.update : selection.length === 0) {
+      log("rien à faire : déjà à jour");
+      return "success";
+    }
+    const stale = staleReason(pinned, status, this.needsConfirm(status, cfg, selection));
+    if (stale !== null) {
+      log(stale);
+      return "failed";
+    }
+    const ctx = this.context(stack, config, status, selection, log, progress);
     const result = await this.updater.update(ctx);
     if (result === "success") await this.detection.recheck(stack, ctx.config);
     return result;
   }
 
-  private async runRollback(name: string, log: LogSink): Promise<Result> {
+  private async runRollback(name: string, service: string | null, log: LogSink): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
-    const ctx = this.context(stack, config, status, log);
-    const result = await this.updater.rollback(ctx, null);
+    const ctx = this.context(stack, config, status, null, log, () => {});
+    const result = await this.updater.rollback(ctx, service);
     if (result === "success") await this.detection.recheck(stack, ctx.config);
     return result;
   }

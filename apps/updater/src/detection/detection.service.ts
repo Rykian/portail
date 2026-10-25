@@ -22,7 +22,7 @@ import { discoverStacks, type DiscoveredStack } from "../stacks/discovery";
 import { readVariableFile } from "../stacks/env-file";
 import { RollbackStore } from "../stacks/rollback.store";
 import { StackStatusStore } from "../stacks/stack-status.store";
-import { Strategies } from "../strategies/strategies";
+import { selectableServices, Strategies } from "../strategies/strategies";
 
 type Checked = { status: ServiceStatus; needsConfirm: boolean };
 
@@ -106,7 +106,6 @@ export class DetectionService {
   }
 
   async checkStack(stack: DiscoveredStack, config: StackConfig): Promise<StackStatus> {
-    const rollback = this.rollbacks.get(stack.name);
     const mode: UpdateMode = config.recipe ? "recipe" : config.version ? "version" : "pull";
     const base: StackStatus = {
       name: stack.name,
@@ -121,9 +120,8 @@ export class DetectionService {
       available: null,
       major: false,
       needsConfirm: config.confirm,
-      rollback: rollback ? { to: rollback.to, major: rollback.major } : null,
+      ...this.rollbackState(stack.name),
       selectable: false,
-      serviceRollbacks: [],
       error: null,
       checkedAt: this.now().toISOString(),
     };
@@ -158,7 +156,7 @@ export class DetectionService {
 
     const major = current !== null && available !== null && isMajorBump(current, available);
 
-    return {
+    const status: StackStatus = {
       ...base,
       services: statuses,
       update: updated.length > 0,
@@ -168,6 +166,7 @@ export class DetectionService {
       major,
       needsConfirm: config.confirm || major || checked.some((c) => c.status.update && c.needsConfirm),
     };
+    return { ...status, selectable: selectableServices(status, config).length > 0 };
   }
 
   /** Checks one stack again after an update or a rollback and stores its status. */
@@ -175,10 +174,23 @@ export class DetectionService {
     this.statuses.saveStackStatus(await this.checkStack(stack, config));
   }
 
-  /** The `rollbacks` table is the source of truth: the stored status only holds the state of the last check. */
+  /** The rollback tables are the source of truth: the stored status only holds the state of the last check. */
   private withRollback(status: StackStatus): StackStatus {
-    const saved = this.rollbacks.get(status.name);
-    return { ...status, rollback: saved ? { to: saved.to, major: saved.major } : null };
+    // Statuses stored before `selectable` existed lack it until the next check.
+    return { ...status, selectable: status.selectable ?? false, ...this.rollbackState(status.name) };
+  }
+
+  /**
+   * The stack-level rollback, else a summary of the per-service points so `rollback` keeps meaning "something can be
+   * rolled back on this stack"; the points themselves are listed per service.
+   */
+  private rollbackState(name: string): Pick<StackStatus, "rollback" | "serviceRollbacks"> {
+    const saved = this.rollbacks.get(name);
+    const points = this.rollbacks.points(name);
+    const serviceRollbacks = points.map(({ service, to, major }) => ({ service, to, major }));
+    if (saved) return { rollback: { to: saved.to, major: saved.major }, serviceRollbacks };
+    if (points.length === 0) return { rollback: null, serviceRollbacks };
+    return { rollback: { to: `${points.length} image(s)`, major: points.some((p) => p.major) }, serviceRollbacks };
   }
 
   private async checkService(service: ComposeService, config: StackConfig): Promise<Checked> {

@@ -351,3 +351,44 @@ test("check stores the config error and keeps the previous config", async () => 
   expect(detection.stacks().configError).toEqual(expect.any(String));
   expect(detection.stacks().stacks.map((s) => s.name)).toEqual(["web"]);
 });
+
+test("stacks() exposes selectable, serviceRollbacks and pendingJobs", async () => {
+  const ref = "lscr.io/linuxserver/x:latest";
+  const stack = await makeStack("x");
+  docker.services.set(stack.dir, [{ name: "web", image: ref, rawImage: ref, pullPolicy: null, platform: null }]);
+  docker.images.set(ref, { id: "i", repoDigests: ["lscr.io/linuxserver/x@sha256:old"], version: null, created: null });
+  registry.digests.set("linuxserver/x:latest", "sha256:new");
+  docker.services.set((await makeStack("idle")).dir, []);
+  await check();
+  const store = moduleRef.get(RollbackStore);
+  store.savePoint({ stack: "x", service: "web", image: ref, to: "1.0", major: false, running: true });
+  store.savePoint({ stack: "x", service: "db", image: "postgres:16", to: "16.1", major: true, running: true });
+
+  let release = () => {};
+  const job = moduleRef
+    .get(JobRunner)
+    .start(
+      { kind: "update", user: null, steps: [], targets: [{ stack: "x", services: ["web"] }] },
+      () => new Promise((resolve) => (release = () => resolve("success"))),
+    );
+  const response = detection.stacks();
+  expect(response.stacks.find((s) => s.name === "x")).toMatchObject({
+    selectable: true,
+    rollback: { to: "2 image(s)", major: true },
+    serviceRollbacks: [
+      { service: "db", to: "16.1", major: true },
+      { service: "web", to: "1.0", major: false },
+    ],
+  });
+  expect(response.stacks.find((s) => s.name === "idle")).toMatchObject({
+    selectable: false,
+    rollback: null,
+    serviceRollbacks: [],
+  });
+  expect(response.pendingJobs).toEqual([
+    { id: job.id, kind: "update", status: "running", targets: [{ stack: "x", services: ["web"] }] },
+  ]);
+  expect((await detection.checkStack(stack, config())).serviceRollbacks).toHaveLength(2);
+  release();
+  await moduleRef.get(JobRunner).idle();
+});

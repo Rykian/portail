@@ -300,7 +300,7 @@ test("createEnginePuller falls back to the CLI when the registry uses a credenti
   const puller = createEnginePuller({
     socket: engine.socket,
     dockerConfigPath: configPath,
-    cliPull: async (image, log) => {
+    cliPull: async (image, _platform, log) => {
       cliCalls.push(image);
       log("Pulling…");
       return exitCode;
@@ -331,4 +331,38 @@ test("createEnginePuller falls back to the CLI when the registry uses a credenti
       () => {},
     ),
   ).rejects.toThrow("docker pull ghcr.io/acme/app:1 a échoué (code 1)");
+});
+
+test("createEnginePuller hands the platform to the CLI fallback", async () => {
+  const engine = await startEngine(ndjson({ status: "never asked" }));
+  const configPath = join(engine.dir, "config.json");
+  await Bun.write(configPath, JSON.stringify({ credsStore: "desktop" }));
+  const cliCalls: { image: string; platform: string | null }[] = [];
+  const puller = createEnginePuller({
+    socket: engine.socket,
+    dockerConfigPath: configPath,
+    cliPull: async (image, platform) => {
+      cliCalls.push({ image, platform });
+      return 0;
+    },
+  });
+
+  await puller.pull(
+    "ghcr.io/acme/app:1",
+    "linux/arm64",
+    () => {},
+    () => {},
+  );
+  await puller.pull(
+    "ghcr.io/acme/app:1",
+    null,
+    () => {},
+    () => {},
+  );
+
+  expect(cliCalls).toEqual([
+    { image: "ghcr.io/acme/app:1", platform: "linux/arm64" },
+    { image: "ghcr.io/acme/app:1", platform: null },
+  ]);
+  expect(engine.requests).toEqual([]);
 });

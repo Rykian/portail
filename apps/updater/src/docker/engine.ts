@@ -129,7 +129,7 @@ const fromImageOf = (ref: ImageRef) =>
 export function createEnginePuller(options: {
   socket: string;
   dockerConfigPath: string;
-  cliPull: (image: string, log: LogSink) => Promise<number>;
+  cliPull: (image: string, platform: string | null, log: LogSink) => Promise<number>;
 }): ImagePuller {
   return {
     async pull(image, platform, onProgress, log) {
@@ -137,7 +137,7 @@ export function createEnginePuller(options: {
       const auth = registryAuth(await readDockerConfig(options.dockerConfigPath), ref.registry);
 
       if (auth.kind === "helper") {
-        const code = await options.cliPull(image, log);
+        const code = await options.cliPull(image, platform, log);
         if (code !== 0) throw new Error(`docker pull ${image} a échoué (code ${code})`);
         return "downloaded";
       }

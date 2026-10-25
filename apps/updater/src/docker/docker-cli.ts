@@ -144,8 +144,8 @@ async function streamed(command: string[], cwd: string | undefined, log: LogSink
 }
 
 /** `docker pull`, for registries whose credentials only a credential helper can provide (no progress). */
-export function pullImage(image: string, log: LogSink): Promise<number> {
-  return streamed(["docker", "pull", image], undefined, log);
+export function pullImage(image: string, platform: string | null, log: LogSink): Promise<number> {
+  return streamed(["docker", "pull", ...(platform ? ["--platform", platform] : []), image], undefined, log);
 }
 
 export function createDockerCli(): Docker {

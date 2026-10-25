@@ -35,13 +35,15 @@ export class StackUpdater {
       const before = await this.docker.containers(stack.dir);
       const strategy = this.strategies.forUpdate(status, config);
       // A pull-style update without a selection targets the whole stack: every selectable service.
+      // Version/recipe updates have none. Every step below sees this resolved selection.
       const selection = strategy.kind === "pull" ? (ctx.selection ?? selectableServices(status, config)) : null;
+      const run = { ...ctx, selection };
       // Order matters: preparing may fail before any change, and the rollback is saved before anything is written.
-      const plan = await strategy.prepare({ ...ctx, selection }, before);
-      await this.saveRollback(ctx, plan, before);
-      await this.runBeforeCommands(ctx);
+      const plan = await strategy.prepare(run, before);
+      await this.saveRollback(run, plan, before);
+      await this.runBeforeCommands(run);
       await plan.apply();
-      await this.pullAndStart(ctx, plan, before);
+      await this.pullAndStart(run, plan, before);
       return "success";
     } catch (error) {
       log(error instanceof Error ? error.message : String(error));

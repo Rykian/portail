@@ -231,20 +231,34 @@ test("a failing before command stops the update", async () => {
 });
 
 test("beforeOnlyOnMajor", async () => {
-  const run = async (status: Partial<StackStatus>) => {
+  // Pull-style: judged on the targeted services (here every selectable one, `app`).
+  const run = async (app: Partial<ServiceStatus>) => {
     docker.shellCalls = [];
     await makeUpdater().update(
       ctx({
         config: { before: ["echo hi"], beforeOnlyOnMajor: true },
-        status: { current: "1", available: "2", ...status },
+        status: { services: [serviceStatus("app", APP, { current: "1.0", available: "1.1", ...app })] },
       }),
     );
     return docker.shellCalls.length;
   };
-  expect(await run({ major: false })).toBe(0);
-  expect(await run({ major: true })).toBe(1);
+  expect(await run({})).toBe(0);
+  expect(await run({ available: "2.0" })).toBe(1);
   expect(await run({ current: null })).toBe(1);
   expect(await run({ available: null })).toBe(1);
+});
+
+test("beforeOnlyOnMajor on a version update follows the stack, whatever selection it is given", async () => {
+  const run = async (status: Partial<StackStatus>) => {
+    await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
+    docker.shellCalls = [];
+    const config = { ...versionConfig, before: ["echo hi"], beforeOnlyOnMajor: true };
+    // `app` has no versions: a selection rule would run `before`.
+    await makeUpdater().update(ctx({ config, status: { ...versionStatus, ...status }, selection: ["app"] }));
+    return docker.shellCalls.length;
+  };
+  expect(await run({ major: false })).toBe(0);
+  expect(await run({ available: "v4.0.0", major: true })).toBe(1);
 });
 
 test("a download failure fails; version file already rewritten", async () => {
@@ -535,6 +549,19 @@ test("major and before follow the selection", async () => {
   await makeUpdater().update(immichCtx({ config, status: majorStack, selection: ["machine-learning"] }));
   expect(docker.shellCalls).toEqual([]);
   expect(rollbacks.points("immich")).toContainEqual(point("machine-learning", { major: false }));
+});
+
+test("a whole-stack pull update judges before on every selectable service", async () => {
+  const config = { beforeOnlyOnMajor: true, before: ["backup"] };
+  // Stack-level values come from machine-learning (minor); server is a major bump.
+  const status = {
+    ...immichStatus({ server: { current: "v1", available: "v2" } }),
+    current: "v1.1.0",
+    available: "v1.2.0",
+    major: false,
+  };
+  expect(await makeUpdater().update(immichCtx({ config, status, selection: null }))).toBe("success");
+  expect(docker.shellCalls).toEqual([{ dir: immichDir, command: "backup" }]);
 });
 
 test("before with a selection follows the selected services only", async () => {

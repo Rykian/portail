@@ -93,8 +93,12 @@ test("version and recipe rows are not migrated", () => {
 });
 
 test("start-up migrates legacy rows and says how many", () => {
-  const store = new RollbackStore(openDatabase(":memory:"));
-  store.save({ stack: "immich", to: "v1.140", major: false, running: true, data: { kind: "pull", services: [] } });
+  const db = openDatabase(":memory:");
+  db.query("INSERT INTO rollbacks (stack, json) VALUES (?, ?)").run(
+    "immich",
+    '{"stack":"immich","to":"v1.140","major":false,"running":true,"data":{"kind":"pull","services":[]}}',
+  );
+  const store = new RollbackStore(db);
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   store.onModuleInit();
   expect(warn).toHaveBeenCalledWith("1 retour(s) arrière migré(s) par service");

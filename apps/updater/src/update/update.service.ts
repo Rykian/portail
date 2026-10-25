@@ -78,8 +78,10 @@ export class UpdateService {
   async rollback(name: string, user: string | null): Promise<Job> {
     const { status } = await this.lookup(name);
     const saved = this.rollbacks.get(name);
-    if (!saved) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
-    const step: JobStep = { stack: name, status: "pending", from: status.current, to: saved.to };
+    const points = this.rollbacks.points(name);
+    if (!saved && points.length === 0) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
+    const to = saved?.to ?? points.map((p) => p.to).join(", ");
+    const step: JobStep = { stack: name, status: "pending", from: status.current, to };
     return this.jobs.start(
       { kind: "rollback", user, steps: [step], targets: [{ stack: name, services: null }] },
       (ctx) => this.singleStep(ctx.setSteps, step, () => this.runRollback(name, ctx.log)),
@@ -110,7 +112,8 @@ export class UpdateService {
   }
 
   private context(stack: DiscoveredStack, config: UpdaterConfig, status: StackStatus, log: LogSink): StackContext {
-    return { stack, config: stackConfig(config, stack.name), status, log };
+    // Selections and progress relay are wired with the API (Task 6): until then a pull-style update takes every selectable service.
+    return { stack, config: stackConfig(config, stack.name), status, selection: null, log, progress: () => {} };
   }
 
   /** Shows the one step of a job as running while `run` works, then as its result. */
@@ -141,7 +144,7 @@ export class UpdateService {
   private async runRollback(name: string, log: LogSink): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
     const ctx = this.context(stack, config, status, log);
-    const result = await this.updater.rollback(ctx);
+    const result = await this.updater.rollback(ctx, null);
     if (result === "success") await this.detection.recheck(stack, ctx.config);
     return result;
   }

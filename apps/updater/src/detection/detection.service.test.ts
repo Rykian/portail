@@ -302,9 +302,13 @@ test("composeServices failure becomes a stack error", async () => {
 test("rollback state is exposed", async () => {
   const stack = await makeStack("rb");
   docker.services.set(stack.dir, []);
-  moduleRef
-    .get(RollbackStore)
-    .save({ stack: "rb", to: "v1", major: false, running: true, data: { kind: "pull", services: [] } });
+  moduleRef.get(RollbackStore).save({
+    stack: "rb",
+    to: "v1",
+    major: false,
+    running: true,
+    data: { kind: "version", file: ".env", variable: "V", value: "v1" },
+  });
   const status = await detection.checkStack(stack, config());
   expect(status.rollback).toEqual({ to: "v1", major: false });
 });

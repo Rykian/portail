@@ -25,6 +25,7 @@ export class VersionStrategy implements UpdateStrategy<"version"> {
     if (value === null) fail(`variable ${version.variable} absente de ${version.file}`);
     if (compareVersions(target, value) <= 0) fail(notNewerMessage(target, value, version.file));
     return {
+      kind: "version",
       rollbackTo: value,
       rollback: { kind: "version", file: version.file, variable: version.variable, value },
       apply: async () => {

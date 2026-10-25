@@ -10,13 +10,15 @@ export type RollbackState = {
   /** The stack was running before the update: a rollback leaves a stopped stack stopped. */
   running: boolean;
   data:
-    | { kind: "pull"; services: { service: string; image: string }[] }
     | { kind: "version"; file: string; variable: string; value: string }
     | { kind: "recipe"; file: string; variable: string; value: string; compose: string };
 };
 
 export type RollbackData = RollbackState["data"];
 export type RollbackKind = RollbackData["kind"];
+
+/** Stack-level pull rollback stored before per-service points; only `migrateLegacy` reads it. */
+type LegacyPullData = { kind: "pull"; services: { service: string; image: string }[] };
 
 /** Rollback point of one pull-style service: replaced by the next update of that service only. */
 export type PullPoint = {
@@ -78,7 +80,9 @@ export class RollbackStore implements OnModuleInit {
       const rows = this.db.query("SELECT json FROM rollbacks").all() as { json: string }[];
       let migrated = 0;
       for (const row of rows) {
-        const { stack, to, major, running, data } = JSON.parse(row.json) as RollbackState;
+        const { stack, to, major, running, data } = JSON.parse(row.json) as Omit<RollbackState, "data"> & {
+          data: RollbackData | LegacyPullData;
+        };
         if (data.kind !== "pull") continue;
         for (const { service, image } of data.services) this.savePoint({ stack, service, image, to, major, running });
         this.delete(stack);

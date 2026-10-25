@@ -80,6 +80,7 @@ export class AuthentikMinorStrategy implements UpdateStrategy<"recipe"> {
     const plan = await this.plan(ctx);
     if (!plan.ok) return fail(plan.error);
     return {
+      kind: "recipe",
       rollbackTo: plan.from,
       rollback: {
         kind: "recipe",

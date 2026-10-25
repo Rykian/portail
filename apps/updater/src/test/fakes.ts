@@ -73,6 +73,8 @@ export class FakeImagePuller implements ImagePuller {
   results = new Map<string, PullResult | Error>();
   /** Progress reported per image, in order, before the pull resolves. */
   progressSteps = new Map<string, [number, number][]>();
+  /** Called after each successful pull, e.g. to make the new image the local one. */
+  onPull: (image: string) => void = () => {};
 
   async pull(
     image: string,
@@ -83,6 +85,7 @@ export class FakeImagePuller implements ImagePuller {
     for (const [downloaded, total] of this.progressSteps.get(image) ?? []) onProgress(downloaded, total);
     const result = this.results.get(image) ?? "downloaded";
     if (result instanceof Error) throw result;
+    this.onPull(image);
     return result;
   }
 }

@@ -64,7 +64,7 @@ test("reopening an existing file keeps its rows", async () => {
     to: "1.0",
     major: false,
     running: true,
-    data: { kind: "pull", services: [] },
+    data: { kind: "version", file: ".env", variable: "V", value: "1.0" },
   });
   first.close();
   const second = openDatabase(file);

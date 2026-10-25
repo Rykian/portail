@@ -10,7 +10,7 @@ import type { ComposeService } from "../docker/docker";
 import { JobRunner } from "../jobs/job-runner";
 import { JobStore } from "../jobs/job.store";
 import { RollbackStore } from "../stacks/rollback.store";
-import { FakeDocker, FakeRegistry, tempDir } from "../test/fakes";
+import { FakeDocker, FakeImagePuller, FakeRegistry, tempDir } from "../test/fakes";
 import { testModule } from "../test/module";
 import { UpdateService } from "./update.service";
 
@@ -24,6 +24,7 @@ const upstream10 = "services:\n  server:\n    image: x:${AUTHENTIK_TAG:-2026.10.
 let root: string;
 let configPath: string;
 let docker: FakeDocker;
+let puller: FakeImagePuller;
 let registry: FakeRegistry;
 let database: Database;
 let moduleRef: TestingModule;
@@ -40,11 +41,13 @@ beforeEach(async () => {
   root = await tempDir();
   configPath = join(root, "config.yml");
   docker = new FakeDocker();
+  puller = new FakeImagePuller();
   registry = new FakeRegistry();
   database = openDatabase(":memory:");
   moduleRef = await testModule({
     database,
     docker,
+    puller,
     registry,
     fetch: fetchFn,
     now: () => NOW,
@@ -73,7 +76,13 @@ async function check() {
 
 const WEB = "lscr.io/linuxserver/web:latest";
 
-/** A floating-tag stack whose `docker compose pull` brings the new image. */
+/** Only running services get a rollback point. */
+const webRunning = () =>
+  docker.containersByDir.set(join(root, "web"), [
+    { service: "web", state: "running", exitCode: 0, health: null, imageId: "old" },
+  ]);
+
+/** A floating-tag stack whose download brings the new image. */
 async function floatingStack(labels: { local: string | null; remote: string | null }) {
   await makeStack("web", [{ name: "web", image: WEB, rawImage: WEB, pullPolicy: null, platform: null }]);
   docker.images.set(WEB, {
@@ -84,8 +93,8 @@ async function floatingStack(labels: { local: string | null; remote: string | nu
   });
   registry.digests.set("linuxserver/web:latest", "sha256:new");
   registry.detailsByRef.set("linuxserver/web:latest", { version: labels.remote, created: "2026-10-01T00:00:00Z" });
-  docker.composeExit = (args) => {
-    if (args[0] === "pull") {
+  puller.onPull = (image) => {
+    if (image === WEB) {
       docker.images.set(WEB, {
         id: "new",
         repoDigests: ["lscr.io/linuxserver/web@sha256:new"],
@@ -93,7 +102,6 @@ async function floatingStack(labels: { local: string | null; remote: string | nu
         created: null,
       });
     }
-    return 0;
   };
 }
 
@@ -138,6 +146,7 @@ test("update on a confirm stack without confirm answers needsConfirm and starts 
 
 test("a successful update re-checks the stack and records from/to on the step", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
+  webRunning();
   await check();
   const response = await service.update("web", {}, "a@b.c");
   if (!("jobId" in response)) throw new Error("expected a job");
@@ -148,15 +157,19 @@ test("a successful update re-checks the stack and records from/to on the step", 
   expect(job).toMatchObject({ kind: "update", user: "a@b.c", status: "success" });
   expect(job?.steps[0]).toEqual({ stack: "web", status: "success", from: "1.0", to: "1.1" });
   const web = detection.stacks().stacks.find((s) => s.name === "web");
-  expect(web).toMatchObject({ update: false, rollback: { to: "1.0" } });
+  expect(web).toMatchObject({ update: false });
+  expect(rollbacks.points("web")).toMatchObject([{ service: "web", to: "1.0" }]);
 });
 
 test("pull mode without version: rollback goes to « l'image précédente »", async () => {
   await floatingStack({ local: null, remote: null });
+  registry.detailsByRef.set("linuxserver/web:latest", { version: null, created: null });
+  webRunning();
   await check();
   await service.update("web", {}, null);
   await jobs.idle();
-  expect(detection.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: false });
+  expect(rollbacks.points("web")).toMatchObject([{ service: "web", to: "l'image précédente" }]);
 });
 
 test("Authentik minor without confirm answers the upstream diff", async () => {
@@ -221,6 +234,7 @@ test("update without button, unknown stack, queued behind a running job", async 
 
 test("rollback needs a rollback state, then restores and re-checks", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
+  webRunning();
   await check();
   await expect(service.rollback("web", null)).rejects.toBeInstanceOf(BadRequestError);
   await expect(service.rollback("nope", null)).rejects.toBeInstanceOf(NotFoundError);
@@ -232,7 +246,7 @@ test("rollback needs a rollback state, then restores and re-checks", async () =>
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
   expect(jobStore.job(job.id)?.status).toBe("success");
-  expect(detection.stacks().stacks[0]?.rollback).toBeNull();
+  expect(rollbacks.points("web")).toEqual([]);
 });
 
 test("a failed update exposes the rollback saved for it, and rollback() starts a job", async () => {
@@ -246,13 +260,13 @@ test("a failed update exposes the rollback saved for it, and rollback() starts a
   await service.update("web", {}, null);
   await jobs.idle();
 
-  expect(detection.stacks().stacks[0]).toMatchObject({ rollback: { to: "1.0" } });
+  expect(rollbacks.points("web")).toMatchObject([{ service: "web", to: "1.0" }]);
   docker.composeExit = () => 0;
   const job = await service.rollback("web", "a@b.c");
   expect(job.steps[0]).toMatchObject({ stack: "web", to: "1.0" });
   await jobs.idle();
   expect(jobStore.job(job.id)?.status).toBe("success");
-  expect(detection.stacks().stacks[0]?.rollback).toBeNull();
+  expect(rollbacks.points("web")).toEqual([]);
 });
 
 test("a version stack whose only change is a floating sidecar updates like pull mode", async () => {
@@ -279,11 +293,10 @@ test("a version stack whose only change is a floating sidecar updates like pull 
     { service: "app", state: "running", exitCode: 0, health: null, imageId: "app" },
     { service: "db", state: "running", exitCode: 0, health: null, imageId: "old" },
   ]);
-  docker.composeExit = (args) => {
-    if (args[0] === "pull") {
+  puller.onPull = (image) => {
+    if (image === sidecar) {
       docker.images.set(sidecar, { id: "new", repoDigests: ["postgres@sha256:new"], version: null, created: null });
     }
-    return 0;
   };
   await check();
   expect(detection.stacks().stacks[0]).toMatchObject({ update: true, button: true, available: null });
@@ -293,18 +306,20 @@ test("a version stack whose only change is a floating sidecar updates like pull 
   await jobs.idle();
   expect(jobStore.history(null).jobs[0]).toMatchObject({ kind: "update", status: "success" });
   expect(await readFile(join(root, "app", ".env"), "utf8")).toBe("APP_TAG=1.0.0\n");
-  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"], ["up", "-d"]]);
-  expect(rollbacks.get("app")).toMatchObject({ to: "l'image précédente", data: { kind: "pull" } });
-  expect(detection.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
+  expect(puller.calls).toEqual([{ image: sidecar, platform: null }]);
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d", "--no-deps", "db"]]);
+  expect(rollbacks.points("app")).toMatchObject([{ service: "db", to: "l'image précédente" }]);
+  expect(detection.stacks().stacks[0]).toMatchObject({ update: false });
 });
 
-test("update-all pulls a stopped stack without starting it", async () => {
+test("update-all downloads a stopped stack without starting it", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
   await check();
   const job = service.updateAll(null);
   await jobs.idle();
   expect(jobStore.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
-  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
+  expect(puller.calls).toEqual([{ image: WEB, platform: null }]);
+  expect(docker.composeCalls).toEqual([]);
   expect(jobStore.jobLog(job.id)).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
 });
 

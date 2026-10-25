@@ -5,7 +5,7 @@ import type { StackStatus } from "@portail/shared/updater-api";
 import { openDatabase } from "../database/database";
 import { RollbackStore } from "../stacks/rollback.store";
 import type { StackContext } from "../stacks/stack-context";
-import { FakeDocker, tempDir } from "../test/fakes";
+import { FakeDocker, FakeImagePuller, tempDir } from "../test/fakes";
 import { StackUpdater } from "../update/stack-updater";
 import { AuthentikMinorStrategy, normalizeCompose, upstreamComposeUrl } from "./authentik-minor.strategy";
 import { PullStrategy } from "./pull.strategy";
@@ -14,6 +14,7 @@ import { VersionStrategy } from "./version.strategy";
 
 const upstream08 = "services:\n  server:\n    image: x:${AUTHENTIK_TAG:-2026.8.4}\n    restart: always\n";
 const upstream10 = "services:\n  server:\n    image: x:${AUTHENTIK_TAG:-2026.10.2}\n    restart: unless-stopped\n";
+const SERVER = "ghcr.io/goauthentik/server:2026.10.2";
 const localError = "Des modifications locales sont dans compose.yml : les déplacer dans compose.override.yml";
 
 const status: StackStatus = {
@@ -37,6 +38,7 @@ const status: StackStatus = {
 };
 
 let docker: FakeDocker;
+let puller: FakeImagePuller;
 let rollbacks: RollbackStore;
 let strategy: AuthentikMinorStrategy;
 let updater: StackUpdater;
@@ -66,7 +68,9 @@ function ctx(config: Partial<StackContext["config"]> = {}): StackContext {
       ...config,
     },
     status,
+    selection: null,
     log: (line) => logs.push(line),
+    progress: () => {},
   };
 }
 
@@ -75,7 +79,8 @@ beforeEach(async () => {
   rollbacks = new RollbackStore(openDatabase(":memory:"));
   strategy = new AuthentikMinorStrategy(fetchFn, docker);
   const strategies = new Strategies(new PullStrategy(docker), new VersionStrategy(docker), strategy);
-  updater = new StackUpdater(docker, rollbacks, strategies, async () => ({ ok: true }));
+  puller = new FakeImagePuller();
+  updater = new StackUpdater(docker, puller, rollbacks, strategies, async () => ({ ok: true }));
   dir = await tempDir();
   logs = [];
   requested = [];
@@ -83,6 +88,7 @@ beforeEach(async () => {
   docker.containersByDir.set(dir, [
     { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:old" },
   ]);
+  docker.services.set(dir, [{ name: "server", image: SERVER, rawImage: SERVER, pullPolicy: null, platform: null }]);
   await writeFile(join(dir, "compose.yml"), localCompose);
   await writeFile(join(dir, ".env"), "AUTHENTIK_TAG=2026.8.4\n");
 });
@@ -129,7 +135,8 @@ for (const withOverride of [false, true]) {
       to: "2026.8.4",
       data: { kind: "recipe", file: ".env", variable: "AUTHENTIK_TAG", value: "2026.8.4", compose: localCompose },
     });
-    expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"], ["up", "-d"]]);
+    expect(puller.calls).toEqual([{ image: SERVER, platform: null }]);
+    expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d"]]);
     const exists = await access(join(dir, "compose.override.yml")).then(
       () => true,
       () => false,
@@ -163,12 +170,13 @@ test("before command failure stops before any change", async () => {
   expect(docker.composeCalls).toEqual([]);
 });
 
-test("a stopped stack gets the new compose.yml and version, is pulled and stays stopped", async () => {
+test("a stopped stack gets the new compose.yml and version, is downloaded and stays stopped", async () => {
   docker.containersByDir.set(dir, []);
   expect(await updater.update(ctx())).toBe("success");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");
-  expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
+  expect(puller.calls).toEqual([{ image: SERVER, platform: null }]);
+  expect(docker.composeCalls).toEqual([]);
   expect(logs).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
 });
 

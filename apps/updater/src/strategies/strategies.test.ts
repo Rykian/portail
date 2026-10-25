@@ -1,10 +1,10 @@
-import type { StackStatus } from "@portail/shared/updater-api";
+import type { ServiceStatus, StackStatus } from "@portail/shared/updater-api";
 import { expect, test } from "vitest";
 import type { StackConfig } from "../config/config";
 import { FakeDocker } from "../test/fakes";
 import { AuthentikMinorStrategy } from "./authentik-minor.strategy";
 import { PullStrategy } from "./pull.strategy";
-import { Strategies } from "./strategies";
+import { selectableServices, selectionMajor, Strategies } from "./strategies";
 import { VersionStrategy } from "./version.strategy";
 
 const baseConfig: StackConfig = { confirm: false, last: false, before: [], beforeOnlyOnMajor: false };
@@ -73,4 +73,52 @@ test("target", () => {
     to: "v1.2.0",
     needsConfirm: false,
   });
+});
+
+const service = (name: string, extra: Partial<ServiceStatus> = {}): ServiceStatus => ({
+  name,
+  image: `ghcr.io/immich-app/immich-${name}:release`,
+  kind: "floating",
+  current: null,
+  available: null,
+  newImageDate: null,
+  update: true,
+  error: null,
+  ...extra,
+});
+
+const immichServices = [
+  service("server"),
+  service("machine-learning"),
+  service("redis", { kind: "literal" }),
+  service("postgres", { kind: "pinned" }),
+  service("web", { update: false }),
+  service("app", { kind: "variable" }),
+];
+
+test.each([
+  ["pull stack", { mode: "pull" }, baseConfig, ["server", "machine-learning"]],
+  ["version stack, sidecar only", { mode: "version", available: null }, versionCfg, ["server", "machine-learning"]],
+  ["recipe stack, sidecar only", { mode: "recipe", available: null }, recipeCfg, ["server", "machine-learning"]],
+  ["version stack with a target", { mode: "version", available: "v2.0.0" }, versionCfg, []],
+  ["version config gone", { mode: "version", available: null }, baseConfig, []],
+] as const)("selectableServices: %s", (_, status, config, expected) => {
+  expect(selectableServices({ ...baseStatus, ...status, services: immichServices }, config)).toEqual(expected);
+});
+
+test("selectionMajor", () => {
+  const status = {
+    ...baseStatus,
+    services: [
+      service("server", { current: "v1.0.0", available: "v2.0.0" }),
+      service("machine-learning", { current: "v1.1.0", available: "v1.2.0" }),
+      service("redis", { current: null, available: "v9.0.0" }),
+    ],
+  };
+  expect(selectionMajor(status, ["server"])).toBe(true);
+  expect(selectionMajor(status, ["machine-learning", "server"])).toBe(true);
+  expect(selectionMajor(status, ["machine-learning"])).toBe(false);
+  expect(selectionMajor(status, ["redis"])).toBe(false);
+  expect(selectionMajor(status, ["unknown"])).toBe(false);
+  expect(selectionMajor(status, [])).toBe(false);
 });

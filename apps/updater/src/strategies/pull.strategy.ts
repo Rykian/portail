@@ -1,46 +1,83 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { uniqueBy } from "remeda";
 import { DOCKER, isUp, type ContainerState, type Docker } from "../docker/docker";
+import { isMajorBump } from "../docker/versions";
 import { runCompose } from "../stacks/compose";
+import { fail } from "../stacks/fail";
+import type { PullPoint } from "../stacks/rollback.store";
 import type { StackContext } from "../stacks/stack-context";
-import type { Plan, RollbackOf, UpdateStrategy } from "./strategy";
+import type { PullPlan, UpdateStrategy } from "./strategy";
 
 export const rollbackTag = (project: string, service: string): string =>
   `updater-rollback/${project}-${service}:latest`;
 
-/** Floating tags: keeps the running images under a rollback tag, then the shared flow pulls and recreates. */
+/** Floating tags: keeps the running images of the targeted services under a rollback tag; the shared flow pulls and recreates them. */
 @Injectable()
 export class PullStrategy implements UpdateStrategy<"pull"> {
   readonly kind = "pull";
 
   constructor(@Inject(DOCKER) private readonly docker: Docker) {}
 
-  async prepare({ stack, status }: StackContext, before: ContainerState[]): Promise<Plan<"pull">> {
+  async prepare(ctx: StackContext, before: ContainerState[]): Promise<PullPlan> {
+    const { stack, status } = ctx;
     const services = await this.docker.composeServices(stack.dir);
+    // StackUpdater has already turned a missing selection into every selectable service.
+    const selection = ctx.selection ?? [];
+    if (selection.length === 0) fail("aucun service à mettre à jour");
+    for (const name of selection) {
+      if (!services.some((s) => s.name === name)) fail(`${name} n'est plus dans la stack`);
+    }
+    const running = before.some(isUp);
     const candidates = uniqueBy(before.filter(isUp), (c) => c.service).flatMap((container) => {
       const service = services.find((s) => s.name === container.service);
       // Docker refuses to tag an image onto a digest reference: pinned services cannot be rolled back.
-      return service && !service.image.includes("@sha256:") ? [{ container, service }] : [];
+      return service && selection.includes(service.name) && !service.image.includes("@sha256:")
+        ? [{ container, service }]
+        : [];
     });
-    const saved: { service: string; image: string }[] = [];
+    const points: PullPoint[] = [];
     for (const { container, service } of candidates) {
       await this.docker.tag(container.imageId, rollbackTag(stack.name, service.name));
-      saved.push({ service: service.name, image: service.image });
+      const checked = status.services.find((s) => s.name === service.name);
+      const current = checked?.current ?? null;
+      const available = checked?.available ?? null;
+      points.push({
+        stack: stack.name,
+        service: service.name,
+        image: service.image,
+        to: current ?? checked?.newImageDate ?? "l'image précédente",
+        major: current !== null && available !== null && isMajorBump(current, available),
+        running,
+      });
     }
     return {
-      rollbackTo: (status.mode === "pull" ? status.current : null) ?? "l'image précédente",
-      rollback: { kind: "pull", services: saved },
+      kind: "pull",
+      services,
+      selection,
+      points,
       // Nothing to write: the pull of the shared flow brings the new images.
       apply: async () => {},
     };
   }
 
-  async restore(ctx: StackContext, data: RollbackOf<"pull">, start: boolean): Promise<void> {
+  /**
+   * Retags the saved images, then recreates in one `up` the services whose stack was running before their update.
+   * A point whose service has left the compose file is skipped. Returns the services started.
+   */
+  async restore(ctx: StackContext, points: PullPoint[]): Promise<string[]> {
     const { stack, log } = ctx;
-    for (const saved of data.services) {
-      log(`== retour à l'image de ${saved.service}`);
-      await this.docker.tag(rollbackTag(stack.name, saved.service), saved.image);
+    const services = await this.docker.composeServices(stack.dir);
+    const started: string[] = [];
+    for (const point of points) {
+      if (!services.some((s) => s.name === point.service)) {
+        log(`${point.service} n'est plus dans la stack : ignoré`);
+        continue;
+      }
+      log(`== retour à l'image de ${point.service}`);
+      await this.docker.tag(rollbackTag(stack.name, point.service), point.image);
+      if (point.running) started.push(point.service);
     }
-    if (start) await runCompose(this.docker, ctx, ["up", "-d"]);
+    if (started.length > 0) await runCompose(this.docker, ctx, ["up", "-d", "--no-deps", ...started]);
+    return started;
   }
 }

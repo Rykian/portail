@@ -1,10 +1,9 @@
-import { Database } from "bun:sqlite";
 import { expect, test } from "vitest";
-import type { StackStatus } from "@shared/updater-api";
-import { Store, type RollbackState } from "./store";
+import { openDatabase } from "../database/database";
+import { JobStore } from "./job.store";
 
 function setup() {
-  return new Store(new Database(":memory:"));
+  return new JobStore(openDatabase(":memory:"));
 }
 
 const input = (startedAt: string) => ({ kind: "update" as const, user: "me", steps: [], startedAt });
@@ -69,35 +68,8 @@ test("purgeLogs removes only old finished logs, keeps rows", () => {
   expect(store.job(old.id)).not.toBeNull();
 });
 
-test("rollback round-trip", () => {
+test("setSteps replaces the steps of a job", () => {
   const store = setup();
-  const state: RollbackState = {
-    stack: "web",
-    to: "1.0",
-    major: false,
-    running: true,
-    data: { kind: "version", file: ".env", variable: "V", value: "1.0" },
-  };
-  expect(store.rollback("web")).toBeNull();
-  store.saveRollback(state);
-  expect(store.rollback("web")).toEqual(state);
-  store.deleteRollback("web");
-  expect(store.rollback("web")).toBeNull();
-});
-
-test("saveStackStatuses replaces all; meta; setSteps", () => {
-  const store = setup();
-  const s = (name: string) => ({ name }) as unknown as StackStatus;
-  store.saveStackStatuses([s("a"), s("b")]);
-  store.saveStackStatuses([s("c")]);
-  expect(store.stackStatuses()).toEqual([s("c")]);
-  store.saveStackStatus(s("d"));
-  expect(store.stackStatuses()).toHaveLength(2);
-  expect(store.getMeta("k")).toBeNull();
-  store.setMeta("k", "v");
-  expect(store.getMeta("k")).toBe("v");
-  store.setMeta("k", null);
-  expect(store.getMeta("k")).toBeNull();
   const job = store.createJob(input("2026-01-01T00:00:00.000Z"));
   store.setSteps(job.id, [{ name: "x", status: "running" } as never]);
   expect(store.job(job.id)?.steps).toHaveLength(1);

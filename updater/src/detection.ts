@@ -8,7 +8,8 @@ import { discoverStacks, type DiscoveredStack } from "./stacks/discovery";
 import { readVariableFile } from "./stacks/env-file";
 import { parseImageRef } from "./docker/image-ref";
 import type { Registry } from "./docker/registry";
-import type { RollbackState, Store } from "./store";
+import type { RollbackState, RollbackStore } from "./stacks/rollback.store";
+import type { StackStatusStore } from "./stacks/stack-status.store";
 import { authentikTarget, isLiteralVersion, isMajorBump, newestAbove } from "./docker/versions";
 
 export type DetectionDeps = { docker: Docker; registry: Registry; now: () => Date };
@@ -151,15 +152,15 @@ export async function checkStack(
 }
 
 export async function checkAll(
-  input: { root: string; config: UpdaterConfig; store: Store },
+  input: { root: string; config: UpdaterConfig; statuses: StackStatusStore; rollbacks: RollbackStore },
   deps: DetectionDeps,
   log: LogSink,
 ): Promise<StackStatus[]> {
-  const { root, config, store } = input;
+  const { root, config, statuses, rollbacks } = input;
   const stacks = await discoverStacks(root, config.exclude);
   const list: StackStatus[] = [];
   for (const stack of stacks) {
-    const status = await checkStack(stack, stackConfig(config, stack.name), store.rollback(stack.name), deps);
+    const status = await checkStack(stack, stackConfig(config, stack.name), rollbacks.get(stack.name), deps);
     list.push(status);
     const count = status.services.filter((s) => s.update).length;
     log(
@@ -170,7 +171,7 @@ export async function checkAll(
           : `${stack.name}: à jour`,
     );
   }
-  store.saveStackStatuses(list);
-  store.setMeta("lastCheck", deps.now().toISOString());
+  statuses.saveStackStatuses(list);
+  statuses.setMeta("lastCheck", deps.now().toISOString());
   return list;
 }

@@ -1,15 +1,17 @@
 import "reflect-metadata";
-import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createConfigLoader } from "./config/config";
+import { openDatabase } from "./database/database";
 import { createDockerCli } from "./docker/docker-cli";
 import { createApp } from "./http/app.module";
 import { JobRunner } from "./jobs";
+import { JobStore } from "./jobs/job.store";
 import { createHttpRegistry } from "./docker/registry";
 import { startScheduler } from "./scheduler";
 import { UpdaterService } from "./service";
-import { Store } from "./store";
+import { RollbackStore } from "./stacks/rollback.store";
+import { StackStatusStore } from "./stacks/stack-status.store";
 
 const token = process.env.UPDATER_TOKEN;
 if (!token) {
@@ -23,17 +25,22 @@ const dataDir = process.env.UPDATER_DATA ?? "/data";
 
 const now = () => new Date();
 mkdirSync(dataDir, { recursive: true });
-const store = new Store(new Database(join(dataDir, "updater.db")));
-const interrupted = store.markInterrupted(now().toISOString());
+const db = openDatabase(join(dataDir, "updater.db"));
+const statuses = new StackStatusStore(db);
+const rollbacks = new RollbackStore(db);
+const jobStore = new JobStore(db);
+const interrupted = jobStore.markInterrupted(now().toISOString());
 if (interrupted > 0) console.warn(`${interrupted} tâche(s) marquée(s) interrompue(s)`);
 
-const jobs = new JobRunner(store, now);
+const jobs = new JobRunner(jobStore, now);
 const service = new UpdaterService({
   root,
   loadConfig: createConfigLoader(configPath),
   docker: createDockerCli(),
   registry: createHttpRegistry(),
-  store,
+  statuses,
+  rollbacks,
+  jobStore,
   jobs,
   now,
 });
@@ -41,7 +48,7 @@ const service = new UpdaterService({
 const app = await createApp(service, token);
 await app.listen(port, "0.0.0.0");
 console.log(`updater listening on 0.0.0.0:${port}`);
-const stopScheduler = startScheduler(service, jobs, store, now);
+const stopScheduler = startScheduler(service, jobs, statuses, jobStore, now);
 
 process.on("SIGTERM", () => {
   stopScheduler();

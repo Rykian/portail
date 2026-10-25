@@ -17,7 +17,9 @@ import { discoverStacks, type DiscoveredStack } from "./stacks/discovery";
 import type { Docker, LogSink } from "./docker/docker";
 import type { JobRunner } from "./jobs";
 import type { Registry } from "./docker/registry";
-import type { Store } from "./store";
+import type { JobStore } from "./jobs/job.store";
+import type { RollbackStore } from "./stacks/rollback.store";
+import type { StackStatusStore } from "./stacks/stack-status.store";
 import { rollbackStack, updateStack, type StackContext } from "./update";
 import { planUpdateAll, runUpdateAll } from "./update/update-all";
 
@@ -40,7 +42,9 @@ export type UpdaterServiceDeps = {
   loadConfig: () => Promise<{ config: UpdaterConfig; error: string | null }>;
   docker: Docker;
   registry: Registry;
-  store: Store;
+  statuses: StackStatusStore;
+  rollbacks: RollbackStore;
+  jobStore: JobStore;
   jobs: JobRunner;
   now: () => Date;
   fetch?: typeof fetch;
@@ -63,22 +67,22 @@ export class UpdaterService {
   constructor(private readonly deps: UpdaterServiceDeps) {}
 
   stacks(): StacksResponse {
-    const { store, jobs } = this.deps;
+    const { statuses, jobs } = this.deps;
     return {
-      stacks: store.stackStatuses().map((status) => this.withRollback(status)),
-      lastCheck: store.getMeta("lastCheck"),
-      configError: store.getMeta("configError"),
+      stacks: statuses.stackStatuses().map((status) => this.withRollback(status)),
+      lastCheck: statuses.getMeta("lastCheck"),
+      configError: statuses.getMeta("configError"),
       runningJob: jobs.running(),
     };
   }
 
   check(user: string | null): Job {
-    const { root, loadConfig, store, jobs } = this.deps;
+    const { root, loadConfig, statuses, rollbacks, jobs } = this.deps;
     return jobs.start({ kind: "check", user, steps: [] }, async ({ log }) => {
       const { config, error } = await loadConfig();
-      store.setMeta("configError", error);
+      statuses.setMeta("configError", error);
       if (error !== null) log(`configuration invalide, la précédente est utilisée : ${error}`);
-      await checkAll({ root, config, store }, this.detectionDeps(), log);
+      await checkAll({ root, config, statuses, rollbacks }, this.detectionDeps(), log);
       return "success";
     });
   }
@@ -122,7 +126,7 @@ export class UpdaterService {
 
   async rollback(name: string, user: string | null): Promise<Job> {
     const { status } = await this.lookup(name);
-    const saved = this.deps.store.rollback(name);
+    const saved = this.deps.rollbacks.get(name);
     if (!saved) throw new BadRequestError(`Aucun retour arrière disponible pour ${name}`);
     const step: JobStep = { stack: name, status: "pending", from: status.current, to: saved.to };
     return this.deps.jobs.start({ kind: "rollback", user, steps: [step] }, (ctx) =>
@@ -131,7 +135,7 @@ export class UpdaterService {
   }
 
   updateAll(user: string | null): Job {
-    const statuses = this.deps.store.stackStatuses();
+    const statuses = this.deps.statuses.stackStatuses();
     const queue = planUpdateAll(statuses);
     if (queue.length === 0) throw new BadRequestError("Aucune mise à jour à appliquer");
     const steps: JobStep[] = queue.map((name) => {
@@ -144,7 +148,7 @@ export class UpdaterService {
   }
 
   job(id: number): Job | null {
-    return this.deps.store.job(id);
+    return this.deps.jobStore.job(id);
   }
 
   events(id: number): AsyncIterable<JobEvent> | null {
@@ -152,12 +156,12 @@ export class UpdaterService {
   }
 
   history(cursor: number | null): HistoryPage {
-    return this.deps.store.history(cursor);
+    return this.deps.jobStore.history(cursor);
   }
 
   /** The `rollbacks` table is the source of truth: the stored status only holds the state of the last check. */
   private withRollback(status: StackStatus): StackStatus {
-    const saved = this.deps.store.rollback(status.name);
+    const saved = this.deps.rollbacks.get(status.name);
     return { ...status, rollback: saved ? { to: saved.to, major: saved.major } : null };
   }
 
@@ -167,8 +171,8 @@ export class UpdaterService {
   }
 
   private async lookup(name: string): Promise<{ stack: DiscoveredStack; status: StackStatus; config: UpdaterConfig }> {
-    const { root, loadConfig, store } = this.deps;
-    const status = store.stackStatuses().find((s) => s.name === name);
+    const { root, loadConfig, statuses } = this.deps;
+    const status = statuses.stackStatuses().find((s) => s.name === name);
     const { config } = await loadConfig();
     const stack = (await discoverStacks(root, config.exclude)).find((s) => s.name === name);
     if (!status || !stack) throw new NotFoundError(`Stack inconnue : ${name}`);
@@ -176,8 +180,8 @@ export class UpdaterService {
   }
 
   private context(stack: DiscoveredStack, config: UpdaterConfig, status: StackStatus, log: LogSink): StackContext {
-    const { docker, store } = this.deps;
-    return { stack, config: stackConfig(config, stack.name), status, docker, store, log };
+    const { docker, rollbacks } = this.deps;
+    return { stack, config: stackConfig(config, stack.name), status, docker, rollbacks, log };
   }
 
   private async singleStep(
@@ -215,13 +219,13 @@ export class UpdaterService {
   }
 
   private async recheck(stack: DiscoveredStack, config: UpdaterConfig): Promise<void> {
-    const { store } = this.deps;
+    const { statuses, rollbacks } = this.deps;
     const status = await checkStack(
       stack,
       stackConfig(config, stack.name),
-      store.rollback(stack.name),
+      rollbacks.get(stack.name),
       this.detectionDeps(),
     );
-    store.saveStackStatus(status);
+    statuses.saveStackStatus(status);
   }
 }

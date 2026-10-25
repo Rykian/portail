@@ -1,7 +1,7 @@
 import { isDeepEqual } from "remeda";
 import type { Job, JobEvent, JobKind, JobStatus, JobStep } from "@shared/updater-api";
 import type { LogSink } from "./docker/docker";
-import type { Store } from "./store";
+import type { JobStore } from "./jobs/job.store";
 
 export class BusyError extends Error {
   constructor() {
@@ -19,7 +19,7 @@ export class JobRunner {
   private idleWaiters: (() => void)[] = [];
 
   constructor(
-    private readonly store: Store,
+    private readonly store: JobStore,
     private readonly now: () => Date,
   ) {}
 

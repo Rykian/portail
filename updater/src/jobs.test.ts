@@ -1,11 +1,11 @@
-import { Database } from "bun:sqlite";
 import { expect, test } from "vitest";
 import type { JobEvent, JobStep } from "@shared/updater-api";
+import { openDatabase } from "./database/database";
 import { BusyError, JobRunner } from "./jobs";
-import { Store } from "./store";
+import { JobStore } from "./jobs/job.store";
 
 function setup() {
-  const store = new Store(new Database(":memory:"));
+  const store = new JobStore(openDatabase(":memory:"));
   const runner = new JobRunner(store, () => new Date("2026-01-02T03:04:05.000Z"));
   return { store, runner };
 }
@@ -113,7 +113,7 @@ test("return() while next() is pending unsubscribes immediately", async () => {
 });
 
 function failingStore(method: "appendLog" | "finishJob") {
-  const store = new Store(new Database(":memory:"));
+  const store = new JobStore(openDatabase(":memory:"));
   store[method] = () => {
     throw new Error("disk full");
   };

@@ -1,12 +1,14 @@
-import { Database } from "bun:sqlite";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, expect, test } from "vitest";
 import { createConfigLoader } from "./config/config";
+import { openDatabase } from "./database/database";
 import type { ComposeService } from "./docker/docker";
 import { BusyError, JobRunner } from "./jobs";
+import { JobStore } from "./jobs/job.store";
 import { BadRequestError, NotFoundError, UpdaterService } from "./service";
-import { Store } from "./store";
+import { RollbackStore } from "./stacks/rollback.store";
+import { StackStatusStore } from "./stacks/stack-status.store";
 import { FakeDocker, FakeRegistry, tempDir } from "./test/fakes";
 
 const NOW = new Date("2026-10-24T10:00:00.000Z");
@@ -20,7 +22,9 @@ let root: string;
 let configPath: string;
 let docker: FakeDocker;
 let registry: FakeRegistry;
-let store: Store;
+let statuses: StackStatusStore;
+let rollbacks: RollbackStore;
+let jobStore: JobStore;
 let jobs: JobRunner;
 let service: UpdaterService;
 
@@ -32,14 +36,19 @@ beforeEach(async () => {
   configPath = join(root, "config.yml");
   docker = new FakeDocker();
   registry = new FakeRegistry();
-  store = new Store(new Database(":memory:"));
-  jobs = new JobRunner(store, () => NOW);
+  const db = openDatabase(":memory:");
+  statuses = new StackStatusStore(db);
+  rollbacks = new RollbackStore(db);
+  jobStore = new JobStore(db);
+  jobs = new JobRunner(jobStore, () => NOW);
   service = new UpdaterService({
     root,
     loadConfig: createConfigLoader(configPath),
     docker,
     registry,
-    store,
+    statuses,
+    rollbacks,
+    jobStore,
     jobs,
     now: () => NOW,
     fetch: fetchFn,
@@ -165,7 +174,9 @@ test("Authentik preview network error is a bad request", async () => {
     loadConfig: createConfigLoader(configPath),
     docker,
     registry,
-    store,
+    statuses,
+    rollbacks,
+    jobStore,
     jobs,
     now: () => NOW,
     fetch: (async () => {
@@ -264,7 +275,7 @@ test("a version stack whose only change is a floating sidecar updates like pull 
   expect(service.history(null).jobs[0]).toMatchObject({ kind: "update", status: "success" });
   expect(await readFile(join(root, "app", ".env"), "utf8")).toBe("APP_TAG=1.0.0\n");
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"], ["up", "-d"]]);
-  expect(store.rollback("app")).toMatchObject({ to: "l'image précédente", data: { kind: "pull" } });
+  expect(rollbacks.get("app")).toMatchObject({ to: "l'image précédente", data: { kind: "pull" } });
   expect(service.stacks().stacks[0]).toMatchObject({ update: false, rollback: { to: "l'image précédente" } });
 });
 
@@ -275,7 +286,7 @@ test("update-all pulls a stopped stack without starting it", async () => {
   await jobs.idle();
   expect(service.job(job.id)).toMatchObject({ status: "success", steps: [{ status: "success" }] });
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["pull"]]);
-  expect(store.jobLog(job.id)).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
+  expect(jobStore.jobLog(job.id)).toContain("pile arrêtée : images téléchargées, pile laissée arrêtée");
 });
 
 test("updateAll runs the planned stacks, refuses when nothing to do", async () => {

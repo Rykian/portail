@@ -1,10 +1,10 @@
-import { Database } from "bun:sqlite";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, expect, test } from "vitest";
 import type { StackStatus } from "@shared/updater-api";
+import { openDatabase } from "./database/database";
 import { authentikMinorUpdate, authentikPreview, normalizeCompose, upstreamComposeUrl } from "./authentik";
-import { Store } from "./store";
+import { RollbackStore } from "./stacks/rollback.store";
 import { FakeDocker, tempDir } from "./test/fakes";
 import type { StackContext } from "./update";
 
@@ -31,7 +31,7 @@ const status: StackStatus = {
 };
 
 let docker: FakeDocker;
-let store: Store;
+let rollbacks: RollbackStore;
 let dir: string;
 let logs: string[];
 let requested: string[];
@@ -59,7 +59,7 @@ function ctx(config: Partial<StackContext["config"]> = {}): StackContext {
     },
     status,
     docker,
-    store,
+    rollbacks,
     log: (line) => logs.push(line),
     wait: async () => ({ ok: true }),
   };
@@ -67,7 +67,7 @@ function ctx(config: Partial<StackContext["config"]> = {}): StackContext {
 
 beforeEach(async () => {
   docker = new FakeDocker();
-  store = new Store(new Database(":memory:"));
+  rollbacks = new RollbackStore(openDatabase(":memory:"));
   dir = await tempDir();
   logs = [];
   requested = [];
@@ -120,7 +120,7 @@ for (const withOverride of [false, true]) {
     expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("success");
     expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(upstream10);
     expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.2\n");
-    expect(store.rollback("authentik")).toMatchObject({
+    expect(rollbacks.get("authentik")).toMatchObject({
       to: "2026.8.4",
       data: { kind: "recipe", file: ".env", variable: "AUTHENTIK_TAG", value: "2026.8.4", compose: localCompose },
     });
@@ -139,7 +139,7 @@ test("minor update refuses local modifications and changes nothing", async () =>
   expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
   expect(logs).toContain(localError);
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(modified);
-  expect(store.rollback("authentik")).toBeNull();
+  expect(rollbacks.get("authentik")).toBeNull();
   expect(docker.composeCalls).toEqual([]);
 });
 
@@ -148,7 +148,7 @@ test("upstream 404 fails without changing anything", async () => {
   expect(await authentikMinorUpdate(ctx(), fetchFn)).toBe("failed");
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.8.4\n");
-  expect(store.rollback("authentik")).toBeNull();
+  expect(rollbacks.get("authentik")).toBeNull();
 });
 
 test("before command failure stops before any change", async () => {
@@ -176,6 +176,6 @@ test("a target that is not newer than the .env value is refused before anything 
   expect(requested).toEqual([]);
   expect(await readFile(join(dir, "compose.yml"), "utf8")).toBe(localCompose);
   expect(await readFile(join(dir, ".env"), "utf8")).toBe("AUTHENTIK_TAG=2026.10.3\n");
-  expect(store.rollback("authentik")).toBeNull();
+  expect(rollbacks.get("authentik")).toBeNull();
   expect(docker.composeCalls).toEqual([]);
 });

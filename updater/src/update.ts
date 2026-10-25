@@ -7,7 +7,7 @@ import type { DiscoveredStack } from "./stacks/discovery";
 import type { ComposeService, ContainerState, Docker, LogSink } from "./docker/docker";
 import { readVariableFile, writeFileAtomic, writeVariableFile } from "./stacks/env-file";
 import { waitHealthy } from "./update/health";
-import type { RollbackState, Store } from "./store";
+import type { RollbackState, RollbackStore } from "./stacks/rollback.store";
 import { compareVersions } from "./docker/versions";
 
 export type StackContext = {
@@ -15,7 +15,7 @@ export type StackContext = {
   config: StackConfig;
   status: StackStatus;
   docker: Docker;
-  store: Store;
+  rollbacks: RollbackStore;
   log: LogSink;
   wait?: typeof waitHealthy;
 };
@@ -55,12 +55,12 @@ const isUp = (container: ContainerState): boolean => container.state === "runnin
 const isStackUp = (before: ContainerState[]): boolean => before.some(isUp);
 
 export function saveRollback(
-  { stack, status, store }: StackContext,
+  { stack, status, rollbacks }: StackContext,
   before: ContainerState[],
   to: string,
   data: RollbackState["data"],
 ): void {
-  store.saveRollback({ stack: stack.name, to, major: status.major, running: isStackUp(before), data });
+  rollbacks.save({ stack: stack.name, to, major: status.major, running: isStackUp(before), data });
 }
 
 /** Pulls, then starts the stack and checks its health, unless nothing of it was running: a stopped stack stays stopped. */
@@ -83,7 +83,7 @@ async function savePullRollback(
   before: ContainerState[],
   to: string,
 ): Promise<void> {
-  const { stack, docker, store } = ctx;
+  const { stack, docker, rollbacks } = ctx;
   const candidates = uniqueBy(before.filter(isUp), (c) => c.service).flatMap((container) => {
     const service = services.find((s) => s.name === container.service);
     // Docker refuses to tag an image onto a digest reference: pinned services cannot be rolled back.
@@ -94,7 +94,7 @@ async function savePullRollback(
     await docker.tag(container.imageId, rollbackTag(stack.name, service.name));
     saved.push({ service: service.name, image: service.image });
   }
-  const previous = store.rollback(stack.name);
+  const previous = rollbacks.get(stack.name);
   if (previous?.data.kind === "pull") {
     for (const old of previous.data.services) {
       if (!saved.some((s) => s.service === old.service)) {
@@ -192,9 +192,9 @@ async function restore(ctx: StackContext, state: RollbackState, start: boolean):
 }
 
 export async function rollbackStack(ctx: StackContext): Promise<Result> {
-  const { stack, docker, store, log } = ctx;
+  const { stack, docker, rollbacks, log } = ctx;
   try {
-    const state = store.rollback(stack.name);
+    const state = rollbacks.get(stack.name);
     if (!state) return fail(`aucun état de retour arrière pour ${stack.name}`);
     // After a failed update, broken containers must come back too: treat them as expected to run.
     const before = (await docker.containers(stack.dir)).map((c) =>
@@ -208,7 +208,7 @@ export async function rollbackStack(ctx: StackContext): Promise<Result> {
     if (state.data.kind === "pull") {
       for (const saved of state.data.services) await docker.removeImage(rollbackTag(stack.name, saved.service));
     }
-    store.deleteRollback(stack.name);
+    rollbacks.delete(stack.name);
     return "success";
   } catch (error) {
     log(error instanceof Error ? error.message : String(error));

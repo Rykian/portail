@@ -1,6 +1,7 @@
 import type { JobRunner } from "./jobs";
 import type { UpdaterService } from "./service";
-import type { Store } from "./store";
+import type { JobStore } from "./jobs/job.store";
+import type { StackStatusStore } from "./stacks/stack-status.store";
 
 const HOUR = 3_600_000;
 const CHECK_EVERY = 6 * HOUR;
@@ -8,7 +9,13 @@ const PURGE_EVERY = 24 * HOUR;
 const KEEP_LOGS = 90 * 24 * HOUR;
 
 /** Checks every 6 h (and at start-up when the last check is older), purges old logs daily. Returns stop. */
-export function startScheduler(service: UpdaterService, jobs: JobRunner, store: Store, now: () => Date): () => void {
+export function startScheduler(
+  service: UpdaterService,
+  jobs: JobRunner,
+  statuses: StackStatusStore,
+  jobStore: JobStore,
+  now: () => Date,
+): () => void {
   const check = () => {
     if (jobs.running() !== null) return;
     try {
@@ -19,13 +26,13 @@ export function startScheduler(service: UpdaterService, jobs: JobRunner, store: 
   };
   const purge = () => {
     try {
-      store.purgeLogs(new Date(now().getTime() - KEEP_LOGS).toISOString());
+      jobStore.purgeLogs(new Date(now().getTime() - KEEP_LOGS).toISOString());
     } catch (error) {
       console.error("log purge failed", error);
     }
   };
 
-  const lastCheck = store.getMeta("lastCheck");
+  const lastCheck = statuses.getMeta("lastCheck");
   if (lastCheck === null || now().getTime() - Date.parse(lastCheck) >= CHECK_EVERY) check();
   purge();
 

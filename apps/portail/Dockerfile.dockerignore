@@ -7,6 +7,8 @@
 !packages/shared
 **/node_modules
 **/.next
+**/*.tsbuildinfo
+**/next-env.d.ts
 apps/portail/data
 apps/portail/e2e
 apps/portail/test-results

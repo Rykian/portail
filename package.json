@@ -6,13 +6,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter portail dev",
+    "dev": "bun run --cwd=apps/portail dev",
     "lint": "oxlint",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "typecheck": "bun run --filter '*' typecheck",
     "test": "bun run --filter '*' test",
-    "e2e": "bun run --filter portail e2e"
+    "e2e": "bun run --cwd=apps/portail e2e"
   },
   "devDependencies": {
     "oxfmt": "^0.72.0",

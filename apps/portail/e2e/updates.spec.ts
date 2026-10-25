@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
+import { waitForHydration } from "./hydration";
 
 test.beforeEach(async ({ page, request }) => {
   await request.post("http://localhost:3101/__fail-events?count=0");
   await page.goto("/admin/updates");
+  await waitForHydration(page);
 });
 
 test("lists the stacks, collapses the up-to-date ones, explains literal versions", async ({ page }) => {

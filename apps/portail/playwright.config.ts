@@ -41,6 +41,7 @@ export default defineConfig({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
+        E2E: "1",
         SERVICES_FILE: "e2e/fixtures/services.yml",
         ICONS_DIR: "e2e/fixtures/icons",
         DEV_USER_GROUPS: "family",

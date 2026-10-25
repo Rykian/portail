@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { waitForHydration } from "./hydration";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
+  await waitForHydration(page);
 });
 
 test("shows only family services, LAN-only ones dimmed from the internet", async ({ page }) => {

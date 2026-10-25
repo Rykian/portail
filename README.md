@@ -6,9 +6,11 @@ Design: `docs/superpowers/specs/2026-10-11-portail-design.md`.
 
 ## Développement
 
+Bun workspaces: `apps/portail` (Next.js), `apps/updater` (NestJS), `packages/shared` (the portal ↔ updater contract). Commands run from the repo root.
+
 ```bash
 bun install
-mkdir -p data/icons && cp services.example.yml data/services.yml
+mkdir -p apps/portail/data/icons && cp apps/portail/services.example.yml apps/portail/data/services.yml
 bun run dev            # fake user from .env.development, no Authentik needed
 bun run lint           # oxlint
 bun run format         # oxfmt
@@ -31,7 +33,7 @@ Edits to `data/services.yml` are picked up on the next page load. Admins must al
 
 ## Mises à jour des conteneurs (updater)
 
-Le service `updater/` (NestJS sur Bun) détecte et applique les mises à jour des stacks compose de CT 100. Le portail n'est que l'interface (admins uniquement) et lui parle côté serveur via `UPDATER_URL` / `UPDATER_TOKEN`.
+Le service `apps/updater/` (NestJS sur Bun) détecte et applique les mises à jour des stacks compose de CT 100. Le portail n'est que l'interface (admins uniquement) et lui parle côté serveur via `UPDATER_URL` / `UPDATER_TOKEN`.
 
 Design: `docs/superpowers/specs/2026-10-24-container-updater-design.md`.
 
@@ -65,9 +67,6 @@ Les commandes `before` s'exécutent dans le conteneur de l'updater (`sh -c`), pa
 ### Développement
 
 ```bash
-cd updater && bun install
-bun run test           # Vitest
-bun run typecheck
+bun run --filter updater test        # Vitest
+bun run --filter updater typecheck
 ```
-
-Les tests de `shared/` tournent dans la suite racine (`bun run test`), pas dans celle de l'updater.

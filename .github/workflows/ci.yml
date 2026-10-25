@@ -18,22 +18,19 @@ jobs:
       - run: bun ci
       - run: bun run lint
       - run: bun run format:check
-      - run: bun run typecheck
-      - run: bun run test
+      - run: bun run --filter portail --filter @portail/shared typecheck
+      - run: bun run --filter portail --filter @portail/shared test
 
   updater:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: updater
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - run: bun ci
-      - run: bun run typecheck
-      - run: bun run test
+      - run: bun run --filter updater typecheck
+      - run: bun run --filter updater test
 
   e2e:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -72,6 +69,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
+          file: apps/portail/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -100,7 +98,7 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
-          file: updater/Dockerfile
+          file: apps/updater/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

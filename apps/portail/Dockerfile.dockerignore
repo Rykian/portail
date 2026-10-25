@@ -1,0 +1,15 @@
+*
+!package.json
+!bun.lock
+!bunfig.toml
+!apps/portail
+!apps/updater/package.json
+!packages/shared
+**/node_modules
+**/.next
+apps/portail/data
+apps/portail/e2e
+apps/portail/test-results
+apps/portail/playwright-report
+**/*.test.ts
+**/.env*

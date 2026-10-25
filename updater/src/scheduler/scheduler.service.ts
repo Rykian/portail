@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from "@nestjs/common";
 import { CLOCK } from "../common/runtime";
 import { DetectionService } from "../detection/detection.service";
 import { JobRunner } from "../jobs/job-runner";
@@ -10,7 +10,7 @@ const PURGE_EVERY = 24 * HOUR;
 const KEEP_LOGS = 90 * 24 * HOUR;
 
 @Injectable()
-export class SchedulerService {
+export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private timers: ReturnType<typeof setInterval>[] = [];
 
   constructor(
@@ -19,6 +19,14 @@ export class SchedulerService {
     @Inject(JobStore) private readonly jobStore: JobStore,
     @Inject(CLOCK) private readonly now: () => Date,
   ) {}
+
+  onApplicationBootstrap(): void {
+    this.start();
+  }
+
+  onModuleDestroy(): void {
+    this.stop();
+  }
 
   /** Checks every 6 h (and at start-up when the last check is older), purges old logs daily. */
   start(): void {

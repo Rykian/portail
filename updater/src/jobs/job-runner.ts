@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { isDeepEqual } from "remeda";
 import type { Job, JobEvent, JobKind, JobStatus, JobStep } from "@shared/updater-api";
 import { CLOCK } from "../common/runtime";
@@ -18,7 +18,7 @@ type Running = { id: number; listeners: Set<(event: JobEvent) => void>; steps: J
 
 /** Runs one job at a time, records its log and steps in the store and streams them to followers. */
 @Injectable()
-export class JobRunner {
+export class JobRunner implements OnModuleInit {
   private current: Running | null = null;
   private idleWaiters: (() => void)[] = [];
 
@@ -26,6 +26,12 @@ export class JobRunner {
     @Inject(JobStore) private readonly store: JobStore,
     @Inject(CLOCK) private readonly now: () => Date,
   ) {}
+
+  /** Runs before any `onApplicationBootstrap`, so the scheduler's first check is never marked interrupted. */
+  onModuleInit(): void {
+    const interrupted = this.store.markInterrupted(this.now().toISOString());
+    if (interrupted > 0) console.warn(`${interrupted} tâche(s) marquée(s) interrompue(s)`);
+  }
 
   start(
     input: { kind: JobKind; user: string | null; steps: JobStep[] },

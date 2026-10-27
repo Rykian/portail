@@ -136,6 +136,62 @@ const stacks = [
   stack("cloudflared", "pull", [service("cloudflared", "cloudflare/cloudflared:latest", "floating")]),
 ];
 
+// immich is the pull stack whose images can be updated one by one (job 4) and rolled back one by one (job 5).
+const immichBase = {
+  ...stack(
+    "immich",
+    "pull",
+    [
+      service("server", "ghcr.io/immich-app/immich-server:latest", "floating", {
+        current: "v1.140",
+        available: "v1.141",
+        update: true,
+      }),
+      service("machine-learning", "ghcr.io/immich-app/immich-machine-learning:latest", "floating", {
+        newImageDate: "2026-10-22T08:00:00.000Z",
+        update: true,
+      }),
+      service("redis", "redis:7.4", "literal", { current: "7.4" }),
+      service("postgres", "ghcr.io/immich-app/postgres@sha256:41eacbe8", "pinned"),
+    ],
+    { update: true, button: true },
+  ),
+  selectable: true,
+};
+
+// Reset by `POST /__reset` before each test. Job 4's stream is driven by `POST /__finish-downloads` and
+// `POST /__end-job`, so the tests see each stage instead of racing a timer.
+let immich = { running: false, updated: false, lastBody: null as unknown, streams: [] as ServerResponse[] };
+
+function immichStatus() {
+  if (!immich.updated) return immichBase;
+  return {
+    ...immichBase,
+    rollback: { to: "1 image(s)", major: false },
+    serviceRollbacks: [{ service: "server", to: "v1.140", major: false }],
+  };
+}
+
+function immichPending() {
+  if (!immich.running) return [];
+  const services = (immich.lastBody as { services?: string[] } | null)?.services ?? null;
+  return [{ id: 4, kind: "update", status: "running", targets: [{ stack: "immich", services }] }];
+}
+
+const GB = 1e9;
+function immichProgress(service: string, downloaded: number, total: number, state: string) {
+  const image = immichBase.services.find((s) => s.name === service)!.image;
+  return { type: "progress", progress: { stack: "immich", service, image, downloaded, total, state } };
+}
+
+function broadcast(events: unknown[], end = false) {
+  for (const response of immich.streams) {
+    for (const event of events) response.write(`data: ${JSON.stringify(event)}\n\n`);
+    if (end) response.end();
+  }
+  if (end) immich.streams = [];
+}
+
 // Job 1 is the stirling update; it shows up in the history once started.
 let stirlingStarted = false;
 const stirlingJob = {
@@ -169,7 +225,13 @@ const AUTHENTIK_DIFF = `--- compose.yml (2026.8)
 const routes: Record<string, Route> = {
   "GET /stacks": () => ({
     status: 200,
-    body: { stacks, lastCheck: CHECKED_AT, configError: null, runningJob: null, pendingJobs: [] },
+    body: {
+      stacks: [...stacks, immichStatus()],
+      lastCheck: CHECKED_AT,
+      configError: null,
+      runningJob: immich.running ? 4 : null,
+      pendingJobs: immichPending(),
+    },
   }),
   "POST /checks": () => ({ status: 200, body: { jobId: 1 } }),
   "POST /stacks/stirling/update": () => {
@@ -205,6 +267,30 @@ const routes: Record<string, Route> = {
     return stream(response, stirlingEvents);
   },
   "GET /jobs/2/events": (_request, _url, response) => stream(response, authentikEvents),
+  "POST /stacks/immich/update": async (request) => {
+    immich.lastBody = JSON.parse((await readBody(request)) || "{}");
+    immich.running = true;
+    return { status: 200, body: { jobId: 4 } };
+  },
+  "GET /jobs/4/events": (_request, _url, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
+    immich.streams.push(response);
+    broadcast([
+      { type: "log", line: "== téléchargement des images" },
+      immichProgress("server", 0.2 * GB, 0.8 * GB, "downloading"),
+      immichProgress("machine-learning", 0.4 * GB, 1.5 * GB, "downloading"),
+    ]);
+    return null;
+  },
+  "POST /stacks/immich/rollback": async (request) => {
+    immich.lastBody = JSON.parse((await readBody(request)) || "{}");
+    return { status: 200, body: { jobId: 5 } };
+  },
+  "GET /jobs/5/events": (_request, _url, response) =>
+    stream(response, [
+      { type: "log", line: "server revient à v1.140" },
+      { type: "end", status: "success" },
+    ]),
   "GET /history": () => ({ status: 200, body: { jobs: stirlingStarted ? [stirlingJob] : [], nextCursor: null } }),
 };
 
@@ -240,6 +326,25 @@ const server = createServer(async (request, response) => {
     eventFailures = Number(url.searchParams.get("count"));
     return send(response, { status: 200, body: { eventFailures } });
   }
+  if (key === "POST /__reset") {
+    for (const stream of immich.streams) stream.end();
+    immich = { running: false, updated: url.searchParams.get("immich") === "updated", lastBody: null, streams: [] };
+    return send(response, { status: 200, body: { ok: true } });
+  }
+  if (key === "POST /__finish-downloads") {
+    broadcast([
+      immichProgress("server", 0.8 * GB, 0.8 * GB, "done"),
+      immichProgress("machine-learning", 1.5 * GB, 1.5 * GB, "done"),
+    ]);
+    return send(response, { status: 200, body: { ok: true } });
+  }
+  if (key === "POST /__end-job") {
+    immich.running = false;
+    immich.updated = true;
+    broadcast([{ type: "end", status: "success" }], true);
+    return send(response, { status: 200, body: { ok: true } });
+  }
+  if (key === "GET /__last-body") return send(response, { status: 200, body: immich.lastBody });
   if (key === "GET /__last-user") return send(response, { status: 200, body: { user: lastUser } });
   if (down) return send(response, { status: 503, body: { error: "down" } });
   if (request.headers.authorization !== `Bearer ${TOKEN}`) {

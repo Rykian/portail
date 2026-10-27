@@ -1,8 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { waitForHydration } from "./hydration";
 
 test.beforeEach(async ({ page, request }) => {
   await request.post("http://localhost:3101/__fail-events?count=0");
+  await request.post("http://localhost:3101/__reset");
   await page.goto("/admin/updates");
   await waitForHydration(page);
 });
@@ -10,7 +11,7 @@ test.beforeEach(async ({ page, request }) => {
 test("lists the stacks, collapses the up-to-date ones, explains literal versions", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Mises à jour" })).toBeVisible();
   await expect(page.getByText(/^Vérifié (il y a|à l’instant)/)).toBeVisible();
-  await expect(page.getByTestId("stack-row")).toHaveText([/stirling/, /mealie/, /group-gate/, /authentik/]);
+  await expect(page.getByTestId("stack-row")).toHaveText([/stirling/, /mealie/, /group-gate/, /authentik/, /immich/]);
 
   const upToDate = page.getByRole("button", { name: "1 à jour" });
   await upToDate.click();
@@ -19,19 +20,19 @@ test("lists the stacks, collapses the up-to-date ones, explains literal versions
   const groupGate = page.getByTestId("stack-row").filter({ hasText: "group-gate" });
   await expect(groupGate).toContainText("nouvelle version disponible : 1.31.6-alpine → 1.31.7-alpine");
   await expect(groupGate).toContainText("Passer la version dans une variable pour l'activer");
-  await expect(groupGate.getByRole("button")).toHaveCount(0);
+  await expect(groupGate.getByRole("button", { name: /mettre à jour/i })).toHaveCount(0);
 
   await expect(page.getByTestId("stack-row").filter({ hasText: "mealie" })).toContainText("v3.4.0 → v3.5.0");
-  await expect(page.getByRole("button", { name: "Tout mettre à jour" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Mettre à jour toutes les stacks" })).toBeEnabled();
 });
 
 test("the card view is remembered", async ({ page }) => {
   await page.getByRole("button", { name: "Cartes" }).click();
-  await expect(page.getByTestId("stack-card")).toHaveCount(5);
+  await expect(page.getByTestId("stack-card")).toHaveCount(6);
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Cartes" })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByTestId("stack-card")).toHaveCount(5);
+  await expect(page.getByTestId("stack-card")).toHaveCount(6);
   await expect(page.getByTestId("stack-row")).toHaveCount(0);
 });
 
@@ -137,4 +138,70 @@ test("an unreadable event ends the log instead of breaking the page", async ({ p
   await expect(page.getByText("Journal indisponible.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Fermer" })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+const FAKE = "http://localhost:3101";
+const immichRow = (page: Page) => page.getByTestId("stack-row").filter({ hasText: "immich" });
+const immichImages = (page: Page) => page.getByRole("list", { name: "Images de immich" });
+
+test("expanding immich lists its images with plain labels", async ({ page }) => {
+  await page.getByRole("button", { name: "Détails de immich" }).click();
+  const images = immichImages(page);
+  await expect(images).toContainText("v1.140 → v1.141");
+  await expect(images).toContainText("image du 22/10/2026");
+  await expect(images).toContainText("version en dur");
+  await expect(images).toContainText("figée");
+  await expect(images.getByText("@sha256")).toBeVisible();
+
+  const boxes = images.getByRole("checkbox");
+  await expect(boxes).toHaveCount(2);
+  for (const box of await boxes.all()) await expect(box).toBeChecked();
+});
+
+test("unchecking an image updates the selection only", async ({ page, request }) => {
+  await page.getByRole("button", { name: "Détails de immich" }).click();
+  await immichImages(page).getByRole("checkbox", { name: "machine-learning" }).uncheck();
+  await immichRow(page).getByRole("button", { name: "Mettre à jour la sélection (1)" }).click();
+
+  await expect(page.getByRole("heading", { name: "Tâche n° 4" })).toBeVisible();
+  expect(await (await request.get(`${FAKE}/__last-body`)).json()).toEqual({ services: ["server"] });
+});
+
+test("download progress shows per image", async ({ page, request }) => {
+  await page.getByRole("button", { name: "Détails de immich" }).click();
+  await page.getByRole("button", { name: "Tout mettre à jour immich" }).click();
+
+  const images = immichImages(page);
+  const bar = images.getByRole("progressbar", { name: "Téléchargement de machine-learning" });
+  await expect(bar).toHaveAttribute("value", "27");
+  await expect(images).toContainText("27 % · 0,4/1,5 Go");
+  expect(await (await request.get(`${FAKE}/__last-body`)).json()).toEqual({
+    services: ["server", "machine-learning"],
+  });
+  // Both images are already targeted by the running job.
+  await expect(images.getByRole("checkbox", { name: "server" })).toBeDisabled();
+  await expect(immichRow(page)).toContainText("en cours");
+
+  await request.post(`${FAKE}/__finish-downloads`);
+  await expect(images.getByText("téléchargée")).toHaveCount(2);
+  await expect(bar).toHaveCount(0);
+
+  await request.post(`${FAKE}/__end-job`);
+  await expect(images.getByRole("button", { name: "Revenir à v1.140" })).toBeVisible();
+});
+
+test("rolling back one image sends its service", async ({ page, request }) => {
+  await request.post(`${FAKE}/__reset?immich=updated`);
+  await page.reload();
+  await waitForHydration(page);
+  await page.getByRole("button", { name: "Détails de immich" }).click();
+  await immichImages(page).getByRole("button", { name: "Revenir à v1.140" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Revenir à v1.140 ?" });
+  await expect(dialog).toContainText("server de immich reprendra son image précédente.");
+  await expect(dialog).not.toContainText("vzdump");
+  await dialog.getByRole("button", { name: "Confirmer" }).click();
+
+  await expect(page.getByRole("log")).toContainText("server revient à v1.140");
+  expect(await (await request.get(`${FAKE}/__last-body`)).json()).toEqual({ service: "server" });
 });

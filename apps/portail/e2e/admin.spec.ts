@@ -23,19 +23,19 @@ test("menu has the Administration entry", async ({ page }) => {
 });
 
 test("avatar shows the update count and the menu links to the updates page", async ({ page }) => {
-  const trigger = page.getByRole("button", { name: "Menu du compte, 4 mises à jour", exact: true });
-  await expect(page.getByTestId("updates-badge")).toHaveText("4");
+  const trigger = page.getByRole("button", { name: "Menu du compte, 5 mises à jour", exact: true });
+  await expect(page.getByTestId("updates-badge")).toHaveText("5");
 
   await trigger.click();
   const items = page.getByRole("menuitem");
-  await expect(items).toHaveText(["Mon compte", "Administration", "Mises à jour (4)", "Se déconnecter"]);
-  await expect(page.getByRole("menuitem", { name: "Mises à jour (4)" })).toHaveAttribute("href", "/admin/updates");
+  await expect(items).toHaveText(["Mon compte", "Administration", "Mises à jour (5)", "Se déconnecter"]);
+  await expect(page.getByRole("menuitem", { name: "Mises à jour (5)" })).toHaveAttribute("href", "/admin/updates");
 });
 
 test("the proxy forwards admin requests to the updater", async ({ request, baseURL }) => {
   const stacks = await request.get("/api/updates/stacks");
   expect(stacks.status()).toBe(200);
-  expect((await stacks.json()).stacks).toHaveLength(5);
+  expect((await stacks.json()).stacks).toHaveLength(6);
 
   // Only checks the URL never escapes /api/updates (the client normalises `..`); the guard itself is unit-tested.
   expect((await request.get("/api/updates/%2E%2E/health")).status()).toBe(404);

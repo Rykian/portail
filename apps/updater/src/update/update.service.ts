@@ -126,20 +126,19 @@ export class UpdateService {
   /** Queues every applicable update; each stack's target is pinned now, as for a single update. */
   async updateAll(user: string | null): Promise<Job> {
     const statuses = this.statuses.stackStatuses();
-    const queue = planUpdateAll(statuses);
-    if (queue.length === 0) throw new BadRequestError("Aucune mise à jour à appliquer");
     const { config } = await this.config.load();
-    const planned = queue.map((name) => {
+    const planned = planUpdateAll(statuses).flatMap((name) => {
       const status = statuses.find((s) => s.name === name)!;
       const cfg = stackConfig(config, name);
       const selection = this.selection(status, cfg, undefined);
+      // No confirmation is asked here: a stack whose targeted services need one is left out, like any stack that does.
+      if (this.needsConfirm(status, cfg, selection)) return [];
       const { from, to } = this.fromTo(status, selection);
       const step: JobStep = { stack: name, status: "pending", from, to, ...(selection ? { services: selection } : {}) };
-      // Update-all picks stacks on their stack-level needsConfirm (no confirmation is asked): a need already there
-      // when planned is accepted as before, only one that appears before the stack runs stops it.
-      const pinned = pinTarget(status, selection, this.needsConfirm(status, cfg, selection));
-      return { step, pinned, target: { stack: name, services: selection } };
+      return [{ step, pinned: pinTarget(status, selection, false), target: { stack: name, services: selection } }];
     });
+    if (planned.length === 0) throw new BadRequestError("Aucune mise à jour à appliquer");
+    const queue = planned.map((p) => p.pinned.stack);
     const steps = planned.map((p) => p.step);
     const targets = planned.map((p) => p.target);
     return this.jobs.start({ kind: "update-all", user, steps, targets }, (ctx) =>
@@ -229,6 +228,14 @@ export class UpdateService {
   ): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
     const cfg = stackConfig(config, name);
+    // A failed check reports nothing to update: that must not pass for "already done".
+    const error =
+      status.error ??
+      status.services.find((s) => s.error !== null && pinned.services.some((p) => p.name === s.name))?.error;
+    if (error != null) {
+      log(`vérification en erreur : ${error} : relancer la mise à jour`);
+      return "failed";
+    }
     // Pinned services already brought up to date (e.g. by an earlier queued job) are left out.
     const selection =
       pinned.services.length === 0

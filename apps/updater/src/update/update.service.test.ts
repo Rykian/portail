@@ -596,6 +596,50 @@ test("a second queued update of a done stack succeeds with nothing left to do", 
   expect(prepare).toHaveBeenCalledTimes(1);
 });
 
+test("a queued update whose re-check failed fails instead of passing for done", async () => {
+  await mealieStack();
+  await immichStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const release = gate();
+  const mealie = await service.update("mealie", {}, null);
+  const immich = await service.update("immich", { services: ["machine-learning"] }, null);
+  if (!("jobId" in mealie) || !("jobId" in immich)) throw new Error("expected jobs");
+  changeStatus("mealie", (status) => ({ ...status, update: false, error: "registre injoignable" }));
+  changeStatus("immich", (status) => ({
+    ...status,
+    services: status.services.map((s) =>
+      s.name === "machine-learning" ? { ...s, update: false, error: "manifest unknown" } : s,
+    ),
+  }));
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(mealie.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(mealie.jobId)).toEqual([
+    "vérification en erreur : registre injoignable : relancer la mise à jour",
+  ]);
+  expect(jobStore.job(immich.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(immich.jobId)).toEqual([
+    "vérification en erreur : manifest unknown : relancer la mise à jour",
+  ]);
+  expect(puller.calls).toEqual([]);
+});
+
+test("update-all leaves out a pull stack whose selectable images need a confirmation", async () => {
+  await floatingStack({ local: "1.0", remote: "1.1" });
+  webRunning();
+  await immichStack();
+  await check();
+  // The stack-level values may come from a minor service; server's major bump still needs a confirmation.
+  changeStatus("immich", (status) => ({ ...status, major: false, needsConfirm: false }));
+
+  const job = await service.updateAll(null);
+  expect(job.steps.map((s) => s.stack)).toEqual(["web"]);
+  await jobs.idle();
+  expect(puller.calls.map((c) => c.image)).toEqual([WEB]);
+});
+
 test("rollback while the stack has a queued or running job → 409", async () => {
   await floatingStack({ local: "1.0", remote: "1.1" });
   webRunning();

@@ -4,19 +4,24 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { match } from "ts-pattern";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/updates-client";
-import { jobEventSchema, jobSchema, type JobStatus, type JobStep, type StackStatus } from "@portail/shared/updater-api";
+import { jobFinished, jobPanelLabel, mergeProgress, stepTitle } from "@/lib/updates-view";
+import {
+  jobEventSchema,
+  jobSchema,
+  type ImageProgress,
+  type JobStatus,
+  type JobStep,
+  type StackStatus,
+} from "@portail/shared/updater-api";
 
-export type JobLog = { lines: string[]; steps: JobStep[]; status: JobStatus | null; lost: boolean };
-
-export function statusLabel(status: JobStatus): string {
-  return match(status)
-    .with("queued", () => "en attente")
-    .with("running", () => "en cours")
-    .with("success", () => "réussie")
-    .with("failed", () => "échouée")
-    .with("interrupted", () => "interrompue")
-    .exhaustive();
-}
+export type JobLog = {
+  lines: string[];
+  steps: JobStep[];
+  /** Latest download progress, keyed `<stack>/<service>`. */
+  progress: Record<string, ImageProgress>;
+  status: JobStatus | null;
+  lost: boolean;
+};
 
 function stepLabel(status: Exclude<JobStep["status"], "not-started">): string {
   return match(status)
@@ -27,7 +32,7 @@ function stepLabel(status: Exclude<JobStep["status"], "not-started">): string {
     .exhaustive();
 }
 
-const EMPTY_LOG: JobLog = { lines: [], steps: [], status: null, lost: false };
+const EMPTY_LOG: JobLog = { lines: [], steps: [], progress: {}, status: null, lost: false };
 const POLL_MS = 3000;
 
 /**
@@ -35,11 +40,12 @@ const POLL_MS = 3000;
  * EventSource reconnects by itself while the connection drops (portal restart), but gives up for good when the
  * server answers a non-200 (portal or proxy still starting): then the job is polled until the stream can be reopened.
  */
-export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void): JobLog {
+export function useJobEvents(jobId: number | null, onEnd?: (status: JobStatus) => void): JobLog {
   const [log, setLog] = useState<JobLog>(EMPTY_LOG);
   const ended = useEffectEvent((status: JobStatus) => onEnd?.(status));
 
   useEffect(() => {
+    if (jobId === null) return;
     let source: EventSource | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let cancelled = false;
@@ -53,7 +59,7 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
     function poll() {
       api(`jobs/${jobId}`, jobSchema).then(
         (job) => {
-          if (job.status !== "running") lastAttempt = true;
+          if (jobFinished(job.status)) lastAttempt = true;
           if (!cancelled) connect();
         },
         // Unknown for now (updater restarting, 502, 404): try the stream again.
@@ -98,8 +104,13 @@ export function useJobEvents(jobId: number, onEnd?: (status: JobStatus) => void)
                 : [...state.steps, step],
             })),
           )
-          // Download progress is rendered by a later change; nothing to keep in the log yet.
-          .with({ type: "progress" }, () => {})
+          .with({ type: "progress" }, ({ progress }) => {
+            const key = `${progress.stack}/${progress.service}`;
+            setLog((state) => ({
+              ...state,
+              progress: { ...state.progress, [key]: mergeProgress(state.progress[key], progress) },
+            }));
+          })
           .with({ type: "end" }, ({ status }) => {
             // Without close(), EventSource would reconnect and replay the job forever.
             current.close();
@@ -153,12 +164,15 @@ export function JobLines({ log }: { log: JobLog }) {
 
 export function JobPanel({
   jobId,
+  queued,
   stacks,
   onEnd,
   onRollback,
   onClose,
 }: {
   jobId: number;
+  /** The stacks list last reported this job as queued. */
+  queued: boolean;
   stacks: StackStatus[];
   onEnd: () => void;
   onRollback: (stack: StackStatus) => void;
@@ -174,7 +188,7 @@ export function JobPanel({
       <div className="mb-3 flex items-center gap-3">
         <h2 className="font-medium">Tâche n° {jobId}</h2>
         <span data-testid="job-status" className="text-sm text-muted-foreground">
-          {log.status ? statusLabel(log.status) : "en cours"}
+          {jobPanelLabel(log, queued)}
         </span>
         {(log.status || log.lost) && (
           <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose}>
@@ -188,7 +202,7 @@ export function JobPanel({
             .filter((s) => s.status !== "not-started")
             .map((step) => (
               <li key={step.stack}>
-                <span className="font-medium">{step.stack}</span>
+                <span className="font-medium">{stepTitle(step)}</span>
                 {step.from && step.to && ` ${step.from} → ${step.to}`} :{" "}
                 {step.status !== "not-started" && stepLabel(step.status)}
               </li>
@@ -199,7 +213,7 @@ export function JobPanel({
       <JobLines log={log} />
       {rollback?.rollback && (
         <Button className="mt-3" variant="destructive" onClick={() => onRollback(rollback)}>
-          Revenir à {rollback.rollback.to}
+          {rollback.serviceRollbacks.length > 0 ? "Tout remettre en arrière" : `Revenir à ${rollback.rollback.to}`}
         </Button>
       )}
     </section>

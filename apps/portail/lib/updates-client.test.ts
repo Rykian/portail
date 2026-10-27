@@ -14,9 +14,9 @@ test("returns the parsed body", async () => {
 });
 
 test("carries the server's error text", async () => {
-  answer(409, { error: "Une tâche est déjà en cours" });
+  answer(409, { error: "Une tâche est déjà prévue pour immich, attends qu'elle se termine" });
   await expect(api("updates", z.object({}), { method: "POST" })).rejects.toThrow(
-    new ApiError(409, "Une tâche est déjà en cours"),
+    new ApiError(409, "Une tâche est déjà prévue pour immich, attends qu'elle se termine"),
   );
 });
 

@@ -5,7 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { relativeTime } from "@/lib/relative-time";
 import { api } from "@/lib/updates-client";
-import { rollbackWarning, updateAllCount } from "@/lib/updates-view";
+import {
+  lockedServices,
+  rollbackWarning,
+  selectableServices,
+  serviceRollbackWarning,
+  updateAllCount,
+} from "@/lib/updates-view";
 import {
   startResponseSchema,
   stacksResponseSchema,
@@ -15,7 +21,7 @@ import {
 } from "@portail/shared/updater-api";
 import { ConfirmDialog, type Confirmation } from "./confirm-dialog";
 import { History } from "./history";
-import { JobPanel } from "./job-panel";
+import { JobPanel, useJobEvents } from "./job-panel";
 import { StacksCards } from "./stacks-cards";
 import { StacksTable } from "./stacks-table";
 
@@ -39,7 +45,10 @@ export function UpdatesPage() {
   const [loadedAt, setLoadedAt] = useState(() => new Date());
   const [unreachable, setUnreachable] = useState(false);
   const [view, setView] = useState<View>(savedView);
-  const [job, setJob] = useState<{ id: number; running: boolean } | null>(null);
+  // The job the user last started (or found running), shown in the panel.
+  const [job, setJob] = useState<number | null>(null);
+  // Per stack, the selectable services the user unchecked; everything else unlocked is selected.
+  const [unchecked, setUnchecked] = useState<Record<string, ReadonlySet<string>>>({});
   const [error, setError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [pending, setPending] = useState(false);
@@ -61,11 +70,15 @@ export function UpdatesPage() {
     api("stacks", stacksResponseSchema).then(
       (response) => {
         show(response);
-        if (response.runningJob !== null) setJob({ id: response.runningJob, running: true });
+        if (response.runningJob !== null) setJob(response.runningJob);
       },
       () => setUnreachable(true),
     );
   }, [show]);
+
+  // The running job's progress fills the expanded lines; its end brings the next queued job in.
+  const running = useJobEvents(data?.runningJob ?? null, reload);
+  const progress = running.status === null ? running.progress : {};
 
   function chooseView(next: View) {
     setView(next);
@@ -91,20 +104,36 @@ export function UpdatesPage() {
   const start = (path: string, body?: unknown) =>
     run(async () => {
       const { jobId } = await api(path, startResponseSchema, { method: "POST", body });
-      setJob({ id: jobId, running: true });
+      started(jobId);
     });
 
-  const update = (stack: StackStatus) =>
+  // A queued job marks its stacks and locks its services: the list must know about it.
+  function started(jobId: number) {
+    setJob(jobId);
+    reload();
+  }
+
+  const update = (stack: StackStatus, services?: string[]) =>
     run(async () => {
       const response = await api(`stacks/${encodeURIComponent(stack.name)}/update`, updateResponseSchema, {
         method: "POST",
+        body: services ? { services } : {},
       });
-      if ("jobId" in response) setJob({ id: response.jobId, running: true });
-      else setConfirmation({ kind: "update", stack: stack.name, details: response.needsConfirm });
+      if ("jobId" in response) started(response.jobId);
+      else setConfirmation({ kind: "update", stack: stack.name, services, details: response.needsConfirm });
     });
 
-  function rollback(stack: StackStatus) {
-    if (stack.rollback) {
+  function rollback(stack: StackStatus, service?: string) {
+    const point = stack.serviceRollbacks.find((p) => p.service === service);
+    if (point) {
+      setConfirmation({
+        kind: "rollback",
+        stack: stack.name,
+        service: point.service,
+        to: point.to,
+        warning: serviceRollbackWarning(stack, point),
+      });
+    } else if (stack.rollback) {
       setConfirmation({ kind: "rollback", stack: stack.name, to: stack.rollback.to, warning: rollbackWarning(stack) });
     }
   }
@@ -112,8 +141,18 @@ export function UpdatesPage() {
   function confirm(confirmed: Confirmation) {
     setConfirmation(null);
     const path = `stacks/${encodeURIComponent(confirmed.stack)}`;
-    if (confirmed.kind === "update") void start(`${path}/update`, { confirm: true });
-    else void start(`${path}/rollback`);
+    if (confirmed.kind === "update") {
+      void start(`${path}/update`, { confirm: true, ...(confirmed.services ? { services: confirmed.services } : {}) });
+    } else void start(`${path}/rollback`, confirmed.service ? { service: confirmed.service } : {});
+  }
+
+  function toggle(stack: string, service: string, checked: boolean) {
+    setUnchecked((current) => {
+      const next = new Set(current[stack]);
+      if (checked) next.delete(service);
+      else next.add(service);
+      return { ...current, [stack]: next };
+    });
   }
 
   if (unreachable) {
@@ -125,8 +164,20 @@ export function UpdatesPage() {
   }
   if (!data) return <p className="text-muted-foreground">Chargement…</p>;
 
-  const busy = pending || (job?.running ?? false);
-  const actions = { disabled: busy, onUpdate: update, onRollback: rollback };
+  const pendingJobs = data.pendingJobs;
+  const selected = (stack: StackStatus) => {
+    const locked = lockedServices(stack, pendingJobs);
+    return selectableServices(stack).filter((s) => !locked.has(s) && !unchecked[stack.name]?.has(s));
+  };
+  const actions = {
+    disabled: pending,
+    pendingJobs,
+    progress,
+    selected,
+    onToggle: toggle,
+    onUpdate: update,
+    onRollback: rollback,
+  };
 
   return (
     <Tabs defaultValue="updates">
@@ -135,15 +186,13 @@ export function UpdatesPage() {
         <TabsTrigger value="history">Historique</TabsTrigger>
       </TabsList>
 
-      {job && (
+      {job !== null && (
         <JobPanel
-          key={job.id}
-          jobId={job.id}
+          key={job}
+          jobId={job}
+          queued={pendingJobs.some((p) => p.id === job && p.status === "queued")}
           stacks={data.stacks}
-          onEnd={() => {
-            setJob((current) => current && { ...current, running: false });
-            reload();
-          }}
+          onEnd={reload}
           onRollback={rollback}
           onClose={() => setJob(null)}
         />
@@ -154,11 +203,11 @@ export function UpdatesPage() {
           <span className="text-sm text-muted-foreground">
             {data.lastCheck ? `Vérifié ${relativeTime(new Date(data.lastCheck), loadedAt)}` : "Jamais vérifié"}
           </span>
-          <Button variant="outline" size="sm" disabled={busy} onClick={() => start("checks")}>
+          <Button variant="outline" size="sm" disabled={pending} onClick={() => start("checks")}>
             Vérifier maintenant
           </Button>
-          <Button size="sm" disabled={busy || updateAllCount(data.stacks) === 0} onClick={() => start("updates")}>
-            Tout mettre à jour
+          <Button size="sm" disabled={pending || updateAllCount(data.stacks) === 0} onClick={() => start("updates")}>
+            Mettre à jour toutes les stacks
           </Button>
           <fieldset className="ml-auto flex gap-1">
             <legend className="sr-only">Présentation</legend>

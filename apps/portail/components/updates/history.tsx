@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/updates-client";
+import { statusLabel, stepTitle } from "@/lib/updates-view";
 import { historyPageSchema, type Job, type JobKind } from "@portail/shared/updater-api";
-import { JobLines, statusLabel, useJobEvents } from "./job-panel";
+import { JobLines, useJobEvents } from "./job-panel";
 
 const dateFormat = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
@@ -99,7 +100,7 @@ export function History() {
                 </TableCell>
                 <TableCell>{job.user ?? "planifiée"}</TableCell>
                 <TableCell className="whitespace-normal">
-                  {job.steps.length > 0 ? job.steps.map((step) => step.stack).join(", ") : kindLabel(job.kind)}
+                  {job.steps.length > 0 ? job.steps.map(stepTitle).join(", ") : kindLabel(job.kind)}
                 </TableCell>
                 <TableCell className="whitespace-normal">{versions(job)}</TableCell>
                 <TableCell>{statusLabel(job.status)}</TableCell>

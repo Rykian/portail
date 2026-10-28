@@ -637,6 +637,23 @@ test("version update pulls every image except pull_policy build/never, passes pl
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d"]]);
 });
 
+test("a buildable service that cannot be downloaded only warns, as compose pull does", async () => {
+  await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
+  docker.composeServices = async () => {
+    const version = (await readFile(join(dir, ".env"), "utf8")).trim().split("=")[1];
+    return [
+      composeService("app", `stirling/app:${version}`),
+      composeService("proxy", "local/proxy:latest", { buildable: true }),
+    ];
+  };
+  puller.results.set("local/proxy:latest", new Error("pull access denied for local/proxy"));
+  expect(await makeUpdater().update(ctx({ config: versionConfig, status: versionStatus }))).toBe("success");
+  expect(logs).toContain(
+    "local/proxy:latest non téléchargée (service construit localement) : pull access denied for local/proxy",
+  );
+  expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d"]]);
+});
+
 test("a pull failure fails the update before up", async () => {
   puller.results.set(IMMICH.server, new Error("manifest unknown"));
   expect(await makeUpdater().update(immichCtx({ selection: ["server"] }))).toBe("failed");

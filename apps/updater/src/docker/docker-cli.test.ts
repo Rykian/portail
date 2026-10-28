@@ -26,8 +26,9 @@ test("parseComposeConfig merges resolved and raw images, skips build-only servic
       rawImage: "ghcr.io/x/app:${APP_VERSION:-1.0.0}",
       pullPolicy: null,
       platform: null,
+      buildable: false,
     },
-    { name: "db", image: "postgres:16", rawImage: "postgres:16", pullPolicy: null, platform: null },
+    { name: "db", image: "postgres:16", rawImage: "postgres:16", pullPolicy: null, platform: null, buildable: false },
   ]);
 });
 
@@ -45,8 +46,32 @@ test("parseComposeConfig reads pull_policy and platform", () => {
       rawImage: "ghcr.io/x/app:1.2.3",
       pullPolicy: "never",
       platform: "linux/arm64",
+      buildable: false,
     },
-    { name: "db", image: "postgres:16", rawImage: "postgres:16", pullPolicy: "always", platform: null },
+    {
+      name: "db",
+      image: "postgres:16",
+      rawImage: "postgres:16",
+      pullPolicy: "always",
+      platform: null,
+      buildable: false,
+    },
+  ]);
+});
+
+test("parseComposeConfig marks services with a build section", () => {
+  const withBuild = JSON.stringify({
+    services: { proxy: { image: "local/proxy:latest", build: { context: "./proxy" } } },
+  });
+  expect(parseComposeConfig(withBuild, withBuild)).toEqual([
+    {
+      name: "proxy",
+      image: "local/proxy:latest",
+      rawImage: "local/proxy:latest",
+      pullPolicy: null,
+      platform: null,
+      buildable: true,
+    },
   ]);
 });
 

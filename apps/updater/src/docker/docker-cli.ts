@@ -9,7 +9,12 @@ const composeConfigSchema = z.object({
     .record(
       z.string(),
       z
-        .object({ image: z.string().optional(), pull_policy: z.string().optional(), platform: z.string().optional() })
+        .object({
+          image: z.string().optional(),
+          pull_policy: z.string().optional(),
+          platform: z.string().optional(),
+          build: z.unknown().optional(),
+        })
         .loose(),
     )
     .default({}),
@@ -54,6 +59,7 @@ export function parseComposeConfig(resolvedJson: string, rawJson: string): Compo
             rawImage: raw[name]?.image ?? service.image,
             pullPolicy: service.pull_policy ?? null,
             platform: service.platform ?? null,
+            buildable: service.build !== undefined,
           },
         ]
       : [],

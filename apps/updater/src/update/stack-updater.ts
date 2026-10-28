@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { DOCKER, isUp, type ComposeService, type ContainerState, type Docker } from "../docker/docker";
-import { IMAGE_PULLER, type ImagePuller } from "../docker/engine";
+import { IMAGE_PULLER, type ImagePuller, type PullResult } from "../docker/engine";
 import { runCompose } from "../stacks/compose";
 import { fail } from "../stacks/fail";
 import { RollbackStore } from "../stacks/rollback.store";
@@ -175,16 +175,25 @@ export class StackUpdater {
     let downloaded = 0;
     let total = 0;
     log(`== téléchargement de ${image}`);
-    const result = await this.puller.pull(
-      image,
-      service.platform,
-      (d, t) => {
-        downloaded = d;
-        total = t;
-        progress({ stack: stack.name, service: service.name, image, downloaded, total, state: "downloading" });
-      },
-      log,
-    );
+    let result: PullResult;
+    try {
+      result = await this.puller.pull(
+        image,
+        service.platform,
+        (d, t) => {
+          downloaded = d;
+          total = t;
+          progress({ stack: stack.name, service: service.name, image, downloaded, total, state: "downloading" });
+        },
+        log,
+      );
+    } catch (error) {
+      if (!service.buildable) throw error;
+      log(
+        `${image} non téléchargée (service construit localement) : ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
     const state = result === "up-to-date" ? "up-to-date" : "done";
     progress({ stack: stack.name, service: service.name, image, downloaded, total, state });
     log(result === "up-to-date" ? `${image} déjà à jour` : `${image} téléchargée`);

@@ -8,6 +8,8 @@ export type ComposeService = {
   pullPolicy: string | null;
   /** `platform` of the service, passed to the download. */
   platform: string | null;
+  /** The service has a `build` section: like `compose pull`, a failed download only warns. */
+  buildable?: boolean;
 };
 
 export type ContainerState = {

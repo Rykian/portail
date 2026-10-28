@@ -22,6 +22,7 @@ import { discoverStacks, type DiscoveredStack } from "../stacks/discovery";
 import { readVariableFile } from "../stacks/env-file";
 import { RollbackStore } from "../stacks/rollback.store";
 import { StackStatusStore } from "../stacks/stack-status.store";
+import { rollbackTag } from "../strategies/pull.strategy";
 import { selectableServices, Strategies } from "../strategies/strategies";
 
 type Checked = { status: ServiceStatus; needsConfirm: boolean };
@@ -107,6 +108,8 @@ export class DetectionService {
 
   async checkStack(stack: DiscoveredStack, config: StackConfig): Promise<StackStatus> {
     const mode: UpdateMode = config.recipe ? "recipe" : config.version ? "version" : "pull";
+    // Read by `base` below: the pruned points must not be listed. A Docker error leaves the points as they are.
+    await this.prunePoints(stack).catch(() => undefined);
     const base: StackStatus = {
       name: stack.name,
       mode,
@@ -167,6 +170,24 @@ export class DetectionService {
       needsConfirm: config.confirm || major || checked.some((c) => c.status.update && c.needsConfirm),
     };
     return { ...status, selectable: selectableServices(status, config).length > 0 };
+  }
+
+  /**
+   * Drops the points whose saved image is the one running: nothing to roll back. Pull rows stored before per-service
+   * points saved every running service, updated or not, and their points were migrated as they were.
+   */
+  private async prunePoints(stack: DiscoveredStack): Promise<void> {
+    const points = this.rollbacks.points(stack.name);
+    if (points.length === 0) return;
+    const containers = await this.docker.containers(stack.dir);
+    for (const { service } of points) {
+      const running = containers.find((c) => c.service === service);
+      if (running === undefined) continue;
+      const tag = rollbackTag(stack.name, service);
+      if ((await this.docker.image(tag))?.id !== running.imageId) continue;
+      this.rollbacks.deletePoint(stack.name, service);
+      await this.docker.removeImage(tag);
+    }
   }
 
   /** Checks one stack again after an update or a rollback and stores its status. */

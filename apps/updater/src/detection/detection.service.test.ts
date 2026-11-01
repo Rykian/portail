@@ -547,3 +547,36 @@ test("a selectable stack needs a confirmation when any selectable service has a 
   expect(status).toMatchObject({ selectable: true, current: "1.0.0", available: "1.1.0", major: false });
   expect(status.needsConfirm).toBe(true);
 });
+
+test("pruneAllPoints keeps a point when a job starts while it prunes", async () => {
+  // The job may have just saved that point: the prune checks again right before deleting.
+  const stack = await makeStack("immich");
+  immichServices(stack.dir);
+  docker.containersByDir.set(stack.dir, [
+    { service: "redis", state: "running", exitCode: 0, health: null, imageId: "sha256:redis" },
+  ]);
+  docker.images.set("updater-rollback/immich-redis:latest", {
+    id: "sha256:redis",
+    repoDigests: [],
+    version: null,
+    created: null,
+  });
+  const store = moduleRef.get(RollbackStore);
+  store.savePoint({ stack: "immich", service: "redis", image: "redis:7", to: "7", major: false, running: true });
+  const jobs = moduleRef.get(JobRunner);
+  let release = () => {};
+  const image = docker.image.bind(docker);
+  docker.image = async (ref) => {
+    if (!jobs.busy()) {
+      jobs.start(
+        { kind: "update", user: null, steps: [], targets: [{ stack: "immich", services: null }] },
+        () => new Promise((resolve) => (release = () => resolve("success"))),
+      );
+    }
+    return image(ref);
+  };
+  await detection.pruneAllPoints();
+  expect(store.points("immich")).toHaveLength(1);
+  release();
+  await jobs.idle();
+});

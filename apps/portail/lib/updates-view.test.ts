@@ -326,7 +326,7 @@ test("no failed-job rollback without a failed step, a rollback or a point of its
   expect(panelRollback({ ...failedStep, services: ["redis"] }, [immichPoints], [])).toBeNull();
 });
 
-test("step versions show the services of a selection", () => {
+test("step versions keep a single image's versions and leave out the names of a selection", () => {
   expect(
     stepVersions([
       {
@@ -336,10 +336,11 @@ test("step versions show the services of a selection", () => {
         from: null,
         to: "server, machine-learning",
       },
+      { stack: "immich", status: "success", services: ["server"], from: "v1.139", to: "v1.140" },
       { stack: "mealie", status: "success", from: "v1", to: "v2" },
       { stack: "idle", status: "success", from: null, to: null },
     ]),
-  ).toBe("immich (server, machine-learning), v1 → v2");
+  ).toBe("v1.139 → v1.140, v1 → v2");
 });
 
 test("the title of a stack rollback", () => {

@@ -833,3 +833,51 @@ test("a rollback of every point has no single from", async () => {
   expect(job.steps[0]).toMatchObject({ from: null, services: ["machine-learning", "server"] });
   await jobs.idle();
 });
+
+test("a queued update after a failed one fails even when a check in between sees the target applied", async () => {
+  // The failed job left VERSION=v3.5.0 behind: the check reads it as current, but the stack is broken.
+  const failing = await testModule({
+    database,
+    docker,
+    puller,
+    registry,
+    fetch: fetchFn,
+    now: () => NOW,
+    env: { root, configPath },
+    wait: async () => ({ ok: false, problems: ["mealie : unhealthy"] }),
+  });
+  jobs = failing.get(JobRunner);
+  jobStore = failing.get(JobStore);
+  detection = failing.get(DetectionService);
+  service = failing.get(UpdateService);
+  const dir = await mealieStack();
+  docker.containersByDir.set(dir, [
+    { service: "mealie", state: "running", exitCode: 0, health: null, imageId: "mealie" },
+  ]);
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const pulled = puller.onPull;
+  puller.onPull = (image) => {
+    pulled(image);
+    registry.tagsByRepository.set("mealie-recipes/mealie", ["v3.4.0", "v3.5.0", "v3.6.0"]);
+  };
+  const release = gate();
+  const first = await service.update("mealie", {}, null);
+  detection.check(null);
+  const second = await service.update("mealie", {}, null);
+  if (!("jobId" in first) || !("jobId" in second)) throw new Error("expected jobs");
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(first.jobId)?.status).toBe("failed");
+  expect(
+    failing
+      .get(StackStatusStore)
+      .stackStatuses()
+      .find((s) => s.name === "mealie")?.current,
+  ).toBe("v3.5.0");
+  expect(jobStore.job(second.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(second.jobId)).toContain(
+    "une tâche précédente sur mealie a échoué : vérifier la stack puis relancer la mise à jour",
+  );
+});

@@ -182,7 +182,7 @@ export class DetectionService {
       for (const stack of await discoverStacks(this.env.root, config.exclude)) {
         // A job may be saving a point of this stack: only a check (itself a job) prunes while jobs run.
         if (this.jobs.busy()) return;
-        await this.prunePoints(stack);
+        await this.prunePoints(stack, () => this.jobs.busy());
       }
     } catch (error) {
       console.warn("nettoyage des retours arrière impossible", error);
@@ -194,7 +194,7 @@ export class DetectionService {
    * back. Pull rows stored before per-service points saved every running service, updated or not, and their points
    * were migrated as they were. A tag already moved to a new image (pull done, `up` failed) keeps its point.
    */
-  private async prunePoints(stack: DiscoveredStack): Promise<void> {
+  private async prunePoints(stack: DiscoveredStack, stop: () => boolean = () => false): Promise<void> {
     const points = this.rollbacks.points(stack.name);
     if (points.length === 0) return;
     const containers = await this.docker.containers(stack.dir);
@@ -206,6 +206,8 @@ export class DetectionService {
       const tag = rollbackTag(stack.name, service);
       if ((await this.docker.image(tag))?.id !== running.imageId) continue;
       if ((await this.docker.image(compose.image))?.id !== running.imageId) continue;
+      // Outside a check, a job that started meanwhile may have just saved this point.
+      if (stop()) return;
       this.rollbacks.deletePoint(stack.name, service);
       await this.docker.removeImage(tag);
     }

@@ -256,6 +256,12 @@ export class UpdateService {
       log(`vérification en erreur : ${error} : relancer la mise à jour`);
       return "failed";
     }
+    // A failure may have left the new image running: tagging it now would replace the only way back to the old one.
+    // Checked before "nothing to do": a failed version update leaves its target written, which reads as reached.
+    if (this.failureCount(name) !== failures) {
+      log(`une tâche précédente sur ${name} a échoué : vérifier la stack puis relancer la mise à jour`);
+      return "failed";
+    }
     // Pinned services already brought up to date (e.g. by an earlier queued job) are left out.
     const selection =
       pinned.services.length === 0
@@ -264,11 +270,6 @@ export class UpdateService {
     if (selection === null ? !status.update || reached(pinned, status) : selection.length === 0) {
       log("rien à faire : déjà à jour");
       return "success";
-    }
-    // A failure may have left the new image running: tagging it now would replace the only way back to the old one.
-    if (this.failureCount(name) !== failures) {
-      log(`une tâche précédente sur ${name} a échoué : vérifier la stack puis relancer la mise à jour`);
-      return "failed";
     }
     const stale = staleReason(pinned, status, this.needsConfirm(status, cfg, selection));
     if (stale !== null) {

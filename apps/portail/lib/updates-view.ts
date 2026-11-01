@@ -179,11 +179,14 @@ export function panelRollback(
   return points.length > 0 ? { stack, points, disabled } : null;
 }
 
-/** The history's summary of a job: each step's versions, or the services of a selection. */
+/**
+ * The history's summary of a job: each step's versions. A selection of several images has none (its `to` only lists
+ * their names, already shown with the stack).
+ */
 export function stepVersions(steps: JobStep[]): string {
   return steps
-    .filter((step) => step.services || step.from || step.to)
-    .map((step) => (step.services ? stepTitle(step) : `${step.from ?? "?"} → ${step.to ?? "?"}`))
+    .filter((step) => (step.services ? step.from !== null : step.from || step.to))
+    .map((step) => `${step.from ?? "?"} → ${step.to ?? "?"}`)
     .join(", ");
 }
 

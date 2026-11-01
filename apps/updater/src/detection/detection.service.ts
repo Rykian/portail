@@ -23,7 +23,7 @@ import { readVariableFile } from "../stacks/env-file";
 import { RollbackStore } from "../stacks/rollback.store";
 import { StackStatusStore } from "../stacks/stack-status.store";
 import { rollbackTag } from "../strategies/pull.strategy";
-import { selectableServices, Strategies } from "../strategies/strategies";
+import { selectableServices, selectionMajor, Strategies } from "../strategies/strategies";
 
 type Checked = { status: ServiceStatus; needsConfirm: boolean };
 
@@ -169,7 +169,10 @@ export class DetectionService {
       major,
       needsConfirm: config.confirm || major || checked.some((c) => c.status.update && c.needsConfirm),
     };
-    return { ...status, selectable: selectableServices(status, config).length > 0 };
+    const selectable = selectableServices(status, config);
+    if (selectable.length === 0) return { ...status, selectable: false };
+    // Updated as a whole, a selectable stack updates its selectable services: they decide, as for any selection.
+    return { ...status, selectable: true, needsConfirm: config.confirm || selectionMajor(status, selectable) };
   }
 
   /** Prunes every stack's points, without waiting for a check (start-up: points migrated from legacy rows). */

@@ -518,3 +518,32 @@ test("pruneAllPoints leaves the points alone while a job runs", async () => {
   release();
   await jobs.idle();
 });
+
+test("a selectable stack needs a confirmation when any selectable service has a major bump", async () => {
+  // The stack-level versions come from the first updated service: here the minor one.
+  const stack = await makeStack("immich");
+  const images = [
+    { name: "machine-learning", repository: "immich-app/immich-machine-learning", from: "1.0.0", to: "1.1.0" },
+    { name: "server", repository: "immich-app/immich-server", from: "1.0.0", to: "2.0.0" },
+  ];
+  docker.services.set(
+    stack.dir,
+    images.map(({ name, repository }) => {
+      const image = `ghcr.io/${repository}:release`;
+      return { name, image, rawImage: image, pullPolicy: null, platform: null };
+    }),
+  );
+  for (const { repository, from, to } of images) {
+    docker.images.set(`ghcr.io/${repository}:release`, {
+      id: repository,
+      repoDigests: [`ghcr.io/${repository}@sha256:old`],
+      version: from,
+      created: null,
+    });
+    registry.digests.set(`${repository}:release`, "sha256:new");
+    registry.detailsByRef.set(`${repository}:release`, { version: to, created: "2026-10-01T00:00:00Z" });
+  }
+  const status = await detection.checkStack(stack, config());
+  expect(status).toMatchObject({ selectable: true, current: "1.0.0", available: "1.1.0", major: false });
+  expect(status.needsConfirm).toBe(true);
+});

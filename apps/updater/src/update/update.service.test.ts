@@ -805,3 +805,20 @@ test("a queued update fails when an earlier job failed on the stack, keeping the
   expect(docker.tagCalls.filter((c) => c.target === "updater-rollback/immich-server:latest")).toHaveLength(1);
   expect(puller.calls.map((c) => c.image)).toEqual([SERVER]);
 });
+
+test("update-all and the stored status agree on a selectable stack with a major service", async () => {
+  await immichStack();
+  // The minor service first: the stack-level versions, and `major`, come from it.
+  const dir = join(root, "immich");
+  const services = docker.services.get(dir);
+  if (!Array.isArray(services)) throw new Error("expected services");
+  docker.services.set(dir, [...services].reverse());
+  await check();
+  const status = moduleRef
+    .get(StackStatusStore)
+    .stackStatuses()
+    .find((s) => s.name === "immich")!;
+  expect(status.major).toBe(false);
+  expect(status.needsConfirm).toBe(true);
+  await expect(service.updateAll(null)).rejects.toThrow(new BadRequestError("Aucune mise à jour à appliquer"));
+});

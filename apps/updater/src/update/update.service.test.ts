@@ -596,6 +596,34 @@ test("a second queued update of a done stack succeeds with nothing left to do", 
   expect(prepare).toHaveBeenCalledTimes(1);
 });
 
+test("a second queued update reached by the first succeeds even when the re-check found a newer version", async () => {
+  const dir = await mealieStack();
+  await writeFile(configPath, MEALIE_CONFIG);
+  await check();
+  const pulled = puller.onPull;
+  puller.onPull = (image) => {
+    pulled(image);
+    registry.tagsByRepository.set("mealie-recipes/mealie", ["v3.4.0", "v3.5.0", "v3.6.0"]);
+  };
+  const release = gate();
+  const first = await service.update("mealie", {}, null);
+  const second = await service.update("mealie", {}, null);
+  if (!("jobId" in first) || !("jobId" in second)) throw new Error("expected jobs");
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(first.jobId)?.status).toBe("success");
+  expect(
+    moduleRef
+      .get(StackStatusStore)
+      .stackStatuses()
+      .find((s) => s.name === "mealie")?.available,
+  ).toBe("v3.6.0");
+  expect(jobStore.job(second.jobId)?.status).toBe("success");
+  expect(jobStore.jobLog(second.jobId)).toEqual(["rien à faire : déjà à jour"]);
+  expect(await readFile(join(dir, ".env"), "utf8")).toBe("VERSION=v3.5.0\n");
+});
+
 test("a queued update whose re-check failed fails instead of passing for done", async () => {
   await mealieStack();
   await immichStack();

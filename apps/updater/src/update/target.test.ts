@@ -1,6 +1,6 @@
 import type { ServiceStatus, StackStatus } from "@portail/shared/updater-api";
 import { expect, test } from "vitest";
-import { pinTarget, staleReason } from "./target";
+import { pinTarget, reached, staleReason } from "./target";
 
 const service = (name: string, overrides: Partial<ServiceStatus> = {}): ServiceStatus => ({
   name,
@@ -98,4 +98,19 @@ test("needs a confirmation that was not given", () => {
     "une confirmation est maintenant nécessaire : relancer la mise à jour",
   );
   expect(staleReason(pinTarget(mealie("v3.5.0"), null, true), mealie("v3.5.0"), true)).toBeNull();
+});
+
+test("a version stack whose current reaches the pinned target is reached", () => {
+  const pinned = pinTarget(status({ mode: "version", available: "v3.5.0" }), null, false);
+  expect(reached(pinned, status({ mode: "version", current: "v3.5.0", available: "v3.6.0" }))).toBe(true);
+});
+
+test("a version stack still below the target is not reached", () => {
+  const pinned = pinTarget(status({ mode: "version", available: "v3.5.0" }), null, false);
+  expect(reached(pinned, status({ mode: "version", current: "v3.4.0", available: "v3.5.0" }))).toBe(false);
+});
+
+test("a pull stack is never reached at stack level", () => {
+  const pinned = pinTarget(status({ available: "v3.5.0" }), ["server"], false);
+  expect(reached(pinned, status({ current: "v3.5.0", available: "v3.6.0" }))).toBe(false);
 });

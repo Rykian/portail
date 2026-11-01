@@ -23,7 +23,7 @@ import type { StackContext } from "../stacks/stack-context";
 import { StackStatusStore } from "../stacks/stack-status.store";
 import { selectableServices, selectionMajor, Strategies } from "../strategies/strategies";
 import { StackUpdater } from "./stack-updater";
-import { pinTarget, staleReason, type PinnedTarget } from "./target";
+import { pinTarget, reached, staleReason, type PinnedTarget } from "./target";
 import { planUpdateAll, runUpdateAll } from "./update-all";
 
 type Result = "success" | "failed";
@@ -256,7 +256,7 @@ export class UpdateService {
       pinned.services.length === 0
         ? null
         : pinned.services.filter((p) => status.services.some((s) => s.name === p.name && s.update)).map((p) => p.name);
-    if (selection === null ? !status.update : selection.length === 0) {
+    if (selection === null ? !status.update || reached(pinned, status) : selection.length === 0) {
       log("rien à faire : déjà à jour");
       return "success";
     }

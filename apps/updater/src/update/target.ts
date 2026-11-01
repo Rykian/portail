@@ -1,4 +1,5 @@
 import type { StackStatus } from "@portail/shared/updater-api";
+import { compareVersions } from "../docker/versions";
 
 /** What an update request was validated against when it was queued: the job applies this target or nothing. */
 export type PinnedTarget = {
@@ -41,4 +42,14 @@ export function staleReason(pinned: PinnedTarget, fresh: StackStatus, freshNeeds
     return "une confirmation est maintenant nécessaire : relancer la mise à jour";
   }
   return null;
+}
+
+/** A version/recipe stack already at (or past) the pinned target, e.g. applied by an earlier queued job. */
+export function reached(pinned: PinnedTarget, fresh: StackStatus): boolean {
+  return (
+    fresh.mode !== "pull" &&
+    pinned.available !== null &&
+    fresh.current !== null &&
+    compareVersions(fresh.current, pinned.available) >= 0
+  );
 }

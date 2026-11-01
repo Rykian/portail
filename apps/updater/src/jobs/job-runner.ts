@@ -36,6 +36,8 @@ type Running = {
   progress: Map<string, ImageProgress>;
   /** When the last progress event of each `stack/service` went out. */
   progressSentAt: Map<string, number>;
+  /** The send of a throttled progress, once its interval has passed; at most one per `stack/service`. */
+  progressFlush: Map<string, ReturnType<typeof setTimeout>>;
   finished: boolean;
 };
 
@@ -75,6 +77,7 @@ export class JobRunner implements OnModuleInit {
       steps: input.steps.map((step) => ({ ...step })),
       progress: new Map(),
       progressSentAt: new Map(),
+      progressFlush: new Map(),
       finished: false,
     };
     if (queued) this.queue.push({ running, work });
@@ -157,7 +160,25 @@ export class JobRunner implements OnModuleInit {
       running.progress.set(key, { ...p });
       const at = this.now().getTime();
       const sentAt = running.progressSentAt.get(key);
-      if (previous?.state === p.state && sentAt !== undefined && at - sentAt < PROGRESS_INTERVAL) return;
+      if (previous?.state === p.state && sentAt !== undefined && at - sentAt < PROGRESS_INTERVAL) {
+        // The latest value still goes out when the interval ends, so the bar never stalls short of the end.
+        if (!running.progressFlush.has(key)) {
+          const flush = setTimeout(
+            () => {
+              running.progressFlush.delete(key);
+              const latest = running.progress.get(key);
+              if (running.finished || latest === undefined) return;
+              running.progressSentAt.set(key, this.now().getTime());
+              this.emit(running, { type: "progress", progress: { ...latest } });
+            },
+            PROGRESS_INTERVAL - (at - sentAt),
+          );
+          running.progressFlush.set(key, flush);
+        }
+        return;
+      }
+      clearTimeout(running.progressFlush.get(key));
+      running.progressFlush.delete(key);
       running.progressSentAt.set(key, at);
       this.emit(running, { type: "progress", progress: { ...p } });
     };
@@ -178,6 +199,8 @@ export class JobRunner implements OnModuleInit {
       running.finished = true;
       running.progress.clear();
       running.progressSentAt.clear();
+      for (const flush of running.progressFlush.values()) clearTimeout(flush);
+      running.progressFlush.clear();
       this.current = null;
       this.emit(running, { type: "end", status });
       this.next();

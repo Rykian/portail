@@ -1,7 +1,7 @@
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { ImageProgress, JobEvent, JobStep, JobTarget } from "@portail/shared/updater-api";
 import { openDatabase } from "../database/database";
-import { JobRunner } from "./job-runner";
+import { JobRunner, type JobContext } from "./job-runner";
 import { JobStore } from "./job.store";
 
 function setup() {
@@ -379,4 +379,82 @@ test("consumer breaking early does not leak or break the job", async () => {
   gate.resolve();
   await runner.idle();
   expect(runner.running()).toBeNull();
+});
+
+afterEach(() => vi.useRealTimers());
+
+/** A job held open while the test reports progress through its context and moves time forward. */
+async function progressJob() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const t0 = Date.parse("2026-01-02T03:04:05.000Z");
+  const { runner, clock } = setupClock(new Date(t0).toISOString());
+  const started = deferred();
+  const gate = deferred();
+  let ctx!: JobContext;
+  const job = runner.start(input, async (c) => {
+    ctx = c;
+    started.resolve();
+    await gate.promise;
+    return "success";
+  });
+  const events = collect(runner.events(job.id)!);
+  await started.promise;
+  // The runner's clock and the timers move together.
+  const advanceTo = (at: number) => {
+    const by = t0 + at - clock.now;
+    clock.now = t0 + at;
+    vi.advanceTimersByTime(by);
+  };
+  const report = (at: number, downloaded: number, state: ImageProgress["state"] = "downloading") => {
+    advanceTo(at);
+    ctx.progress({ stack: "s", service: "a", image: "a:1", downloaded, total: 100, state });
+  };
+  const end = async () => {
+    gate.resolve();
+    await runner.idle();
+    return (await events).filter((e) => e.type !== "log" && e.type !== "step");
+  };
+  return { report, advanceTo, end };
+}
+
+const sent = (downloaded: number, state: ImageProgress["state"] = "downloading"): JobEvent => ({
+  type: "progress",
+  progress: { stack: "s", service: "a", image: "a:1", downloaded, total: 100, state },
+});
+
+test("a throttled progress is sent once the interval has passed", async () => {
+  const { report, advanceTo, end } = await progressJob();
+  report(0, 10);
+  report(100, 50);
+  advanceTo(249);
+  advanceTo(250);
+  expect(await end()).toEqual([sent(10), sent(50), { type: "end", status: "success" }]);
+});
+
+test("a newer throttled value replaces the pending one", async () => {
+  const { report, advanceTo, end } = await progressJob();
+  report(0, 10);
+  report(100, 50);
+  report(200, 90);
+  advanceTo(250);
+  expect(await end()).toEqual([sent(10), sent(90), { type: "end", status: "success" }]);
+});
+
+test("a state change cancels the pending flush", async () => {
+  const { report, advanceTo, end } = await progressJob();
+  report(0, 10);
+  report(100, 50);
+  report(150, 100, "done");
+  advanceTo(400);
+  expect(await end()).toEqual([sent(10), sent(100, "done"), { type: "end", status: "success" }]);
+});
+
+test("no flush after the job ended", async () => {
+  const { report, advanceTo, end } = await progressJob();
+  report(0, 10);
+  report(100, 50);
+  const events = await end();
+  advanceTo(400);
+  expect(events).toEqual([sent(10), { type: "end", status: "success" }]);
+  expect(vi.getTimerCount()).toBe(0);
 });

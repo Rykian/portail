@@ -31,6 +31,9 @@ type Result = "success" | "failed";
 /** What a user can ask for: a single update (confirmed first when needed), a rollback, or every update at once. */
 @Injectable()
 export class UpdateService {
+  /** Failed updates and rollbacks per stack: a job queued before one of them must not run on what it left behind. */
+  private readonly failures = new Map<string, number>();
+
   constructor(
     @Inject(ENV) private readonly env: Env,
     @Inject(ConfigService) private readonly config: ConfigService,
@@ -83,9 +86,10 @@ export class UpdateService {
 
     const step: JobStep = { stack: name, status: "pending", from, to, ...(selection ? { services: selection } : {}) };
     const pinned = pinTarget(status, selection, body.confirm === true);
+    const failures = this.failureCount(name);
     const job = this.jobs.start(
       { kind: "update", user, steps: [step], targets: [{ stack: name, services: selection }] },
-      (job) => this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log, job.progress, pinned)),
+      (job) => this.singleStep(job.setSteps, step, () => this.runUpdate(name, job.log, job.progress, pinned, failures)),
     );
     return { jobId: job.id };
   }
@@ -135,7 +139,14 @@ export class UpdateService {
       if (this.needsConfirm(status, cfg, selection)) return [];
       const { from, to } = this.fromTo(status, selection);
       const step: JobStep = { stack: name, status: "pending", from, to, ...(selection ? { services: selection } : {}) };
-      return [{ step, pinned: pinTarget(status, selection, false), target: { stack: name, services: selection } }];
+      return [
+        {
+          step,
+          pinned: pinTarget(status, selection, false),
+          failures: this.failureCount(name),
+          target: { stack: name, services: selection },
+        },
+      ];
     });
     if (planned.length === 0) throw new BadRequestError("Aucune mise à jour à appliquer");
     const queue = planned.map((p) => p.pinned.stack);
@@ -144,7 +155,10 @@ export class UpdateService {
     return this.jobs.start({ kind: "update-all", user, steps, targets }, (ctx) =>
       runUpdateAll(
         queue,
-        (name, log) => this.runUpdate(name, log, ctx.progress, planned.find((p) => p.pinned.stack === name)!.pinned),
+        (name, log) => {
+          const { pinned, failures } = planned.find((p) => p.pinned.stack === name)!;
+          return this.runUpdate(name, log, ctx.progress, pinned, failures);
+        },
         ctx,
         steps,
       ),
@@ -225,6 +239,7 @@ export class UpdateService {
     log: LogSink,
     progress: (p: ImageProgress) => void,
     pinned: PinnedTarget,
+    failures: number,
   ): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
     const cfg = stackConfig(config, name);
@@ -245,13 +260,18 @@ export class UpdateService {
       log("rien à faire : déjà à jour");
       return "success";
     }
+    // A failure may have left the new image running: tagging it now would replace the only way back to the old one.
+    if (this.failureCount(name) !== failures) {
+      log(`une tâche précédente sur ${name} a échoué : vérifier la stack puis relancer la mise à jour`);
+      return "failed";
+    }
     const stale = staleReason(pinned, status, this.needsConfirm(status, cfg, selection));
     if (stale !== null) {
       log(stale);
       return "failed";
     }
     const ctx = this.context(stack, config, status, selection, log, progress);
-    const result = await this.updater.update(ctx);
+    const result = await this.recordFailure(name, () => this.updater.update(ctx));
     if (result === "success") await this.detection.recheck(stack, ctx.config);
     return result;
   }
@@ -259,8 +279,23 @@ export class UpdateService {
   private async runRollback(name: string, service: string | null, log: LogSink): Promise<Result> {
     const { stack, status, config } = await this.lookup(name);
     const ctx = this.context(stack, config, status, null, log, () => {});
-    const result = await this.updater.rollback(ctx, service);
+    const result = await this.recordFailure(name, () => this.updater.rollback(ctx, service));
     if (result === "success") await this.detection.recheck(stack, ctx.config);
     return result;
+  }
+
+  private failureCount(name: string): number {
+    return this.failures.get(name) ?? 0;
+  }
+
+  /** Runs work that changes the stack and counts it when it fails or throws. */
+  private async recordFailure(name: string, work: () => Promise<Result>): Promise<Result> {
+    let result: Result = "failed";
+    try {
+      result = await work();
+      return result;
+    } finally {
+      if (result === "failed") this.failures.set(name, this.failureCount(name) + 1);
+    }
   }
 }

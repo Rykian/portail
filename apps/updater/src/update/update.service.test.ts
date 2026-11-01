@@ -738,3 +738,42 @@ test("update-all pins the planned targets", async () => {
   );
   expect(puller.calls.map((c) => c.image)).toEqual([`${MEALIE}:v3.4.0`]);
 });
+
+test("a queued update fails when an earlier job failed on the stack, keeping the rollback point", async () => {
+  // A failed health check leaves the new image running: tagging it now would replace the only way back.
+  const failing = await testModule({
+    database,
+    docker,
+    puller,
+    registry,
+    fetch: fetchFn,
+    now: () => NOW,
+    env: { root, configPath },
+    wait: async () => {
+      docker.containersByDir.set(join(root, "immich"), [
+        { service: "server", state: "running", exitCode: 1, health: null, imageId: `${SERVER}-new` },
+      ]);
+      return { ok: false, problems: ["server : unhealthy"] };
+    },
+  });
+  jobs = failing.get(JobRunner);
+  jobStore = failing.get(JobStore);
+  detection = failing.get(DetectionService);
+  service = failing.get(UpdateService);
+  await immichStack();
+  await check();
+  const release = gate();
+  const first = await service.update("immich", { services: ["server"], confirm: true }, null);
+  const second = await service.update("immich", { services: ["server"], confirm: true }, null);
+  if (!("jobId" in first) || !("jobId" in second)) throw new Error("expected jobs");
+  release();
+  await jobs.idle();
+
+  expect(jobStore.job(first.jobId)?.status).toBe("failed");
+  expect(jobStore.job(second.jobId)?.status).toBe("failed");
+  expect(jobStore.jobLog(second.jobId)).toContain(
+    "une tâche précédente sur immich a échoué : vérifier la stack puis relancer la mise à jour",
+  );
+  expect(docker.tagCalls.filter((c) => c.target === "updater-rollback/immich-server:latest")).toHaveLength(1);
+  expect(puller.calls.map((c) => c.image)).toEqual([SERVER]);
+});

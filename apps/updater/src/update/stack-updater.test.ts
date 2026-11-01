@@ -637,6 +637,24 @@ test("version update pulls every image except pull_policy build/never, passes pl
   expect(docker.composeCalls.map((c) => c.args)).toEqual([["up", "-d"]]);
 });
 
+test("an image shared by two services is downloaded once", async () => {
+  await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
+  docker.composeServices = async () => {
+    const version = (await readFile(join(dir, ".env"), "utf8")).trim().split("=")[1];
+    return [
+      composeService("app", `stirling/app:${version}`),
+      composeService("worker", `stirling/app:${version}`),
+      composeService("arm", `stirling/app:${version}`, { platform: "linux/arm64" }),
+    ];
+  };
+  expect(await makeUpdater().update(ctx({ config: versionConfig, status: versionStatus }))).toBe("success");
+  expect(puller.calls).toEqual([
+    { image: "stirling/app:v3.5.0", platform: null },
+    { image: "stirling/app:v3.5.0", platform: "linux/arm64" },
+  ]);
+  expect(logs.filter((line) => line === "== téléchargement de stirling/app:v3.5.0")).toHaveLength(2);
+});
+
 test("a buildable service that cannot be downloaded only warns, as compose pull does", async () => {
   await writeFile(join(dir, ".env"), "VERSION=v3.4.0\n");
   docker.composeServices = async () => {

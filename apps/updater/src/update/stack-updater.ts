@@ -1,4 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { uniqueBy } from "remeda";
 import { DOCKER, isUp, type ComposeService, type ContainerState, type Docker } from "../docker/docker";
 import { IMAGE_PULLER, type ImagePuller, type PullResult } from "../docker/engine";
 import { runCompose } from "../stacks/compose";
@@ -152,7 +153,9 @@ export class StackUpdater {
       plan.kind === "pull"
         ? plan.services.filter((s) => plan.selection.includes(s.name))
         : await this.docker.composeServices(ctx.stack.dir);
-    for (const service of targets.filter(isDownloaded)) await this.download(ctx, service);
+    // Services sharing an image download it once, under the first of them, as `compose pull` did.
+    const downloads = uniqueBy(targets.filter(isDownloaded), (s) => `${s.image}|${s.platform ?? ""}`);
+    for (const service of downloads) await this.download(ctx, service);
     if (!isStackUp(before)) {
       ctx.log("pile arrêtée : images téléchargées, pile laissée arrêtée");
       return;

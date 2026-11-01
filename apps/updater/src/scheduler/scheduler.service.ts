@@ -28,7 +28,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     this.stop();
   }
 
-  /** Checks every 6 h (and at start-up when the last check is older), purges old logs daily. */
+  /** Checks every 6 h (and at start-up when the last check is older, else prunes points), purges old logs daily. */
   start(): void {
     const check = () => {
       if (this.jobs.busy()) return;
@@ -47,7 +47,9 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     };
 
     const lastCheck = this.detection.lastCheck();
+    // A check prunes rollback points itself; without one, points migrated at start-up are pruned now.
     if (lastCheck === null || this.now().getTime() - Date.parse(lastCheck) >= CHECK_EVERY) check();
+    else void this.detection.pruneAllPoints();
     purge();
 
     this.timers = [setInterval(check, CHECK_EVERY), setInterval(purge, PURGE_EVERY)];

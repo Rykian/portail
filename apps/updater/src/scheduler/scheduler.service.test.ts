@@ -12,6 +12,7 @@ let lastCheck: string | null;
 let jobStore: JobStore;
 let jobs: JobRunner;
 let check: ReturnType<typeof vi.fn>;
+let pruneAllPoints: ReturnType<typeof vi.fn>;
 let scheduler: SchedulerService;
 const now = () => new Date(Date.now());
 
@@ -21,7 +22,8 @@ beforeEach(() => {
   jobs = new JobRunner(jobStore, now);
   check = vi.fn();
   lastCheck = null;
-  const detection = { check, lastCheck: () => lastCheck } as unknown as DetectionService;
+  pruneAllPoints = vi.fn(async () => {});
+  const detection = { check, lastCheck: () => lastCheck, pruneAllPoints } as unknown as DetectionService;
   scheduler = new SchedulerService(detection, jobs, jobStore, now);
 });
 
@@ -81,4 +83,19 @@ test("purges logs older than 90 days once a day", () => {
   expect(purge).toHaveBeenCalledTimes(2);
   expect(purge).toHaveBeenLastCalledWith(new Date(START - 89 * 24 * HOUR).toISOString());
   scheduler.stop();
+});
+
+test("start-up prunes points when no check is due", () => {
+  lastCheck = new Date(START - HOUR).toISOString();
+  scheduler.start();
+  scheduler.stop();
+  expect(check).not.toHaveBeenCalled();
+  expect(pruneAllPoints).toHaveBeenCalledTimes(1);
+});
+
+test("start-up leaves pruning to the check when one is due", () => {
+  scheduler.start();
+  scheduler.stop();
+  expect(check).toHaveBeenCalledTimes(1);
+  expect(pruneAllPoints).not.toHaveBeenCalled();
 });

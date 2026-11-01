@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { stackConfig, type StackConfig, type UpdaterConfig } from "../config/config";
 import { JobRunner } from "../jobs/job-runner";
 import type { DiscoveredStack } from "../stacks/discovery";
+import { JobStore } from "../jobs/job.store";
 import { RollbackStore } from "../stacks/rollback.store";
 import { StackStatusStore } from "../stacks/stack-status.store";
 import { FakeDocker, FakeRegistry, tempDir } from "../test/fakes";
@@ -393,10 +394,22 @@ test("stacks() exposes selectable, serviceRollbacks and pendingJobs", async () =
   await moduleRef.get(JobRunner).idle();
 });
 
+const IMMICH_SERVER = "ghcr.io/immich-app/immich-server:release";
+
+/** `server` and `redis`, with the images their tags resolve to. */
+function immichServices(dir: string, serverImageId = "sha256:new-server") {
+  docker.services.set(dir, [
+    { name: "server", image: IMMICH_SERVER, rawImage: IMMICH_SERVER, pullPolicy: null, platform: null },
+    { name: "redis", image: "redis:7", rawImage: "redis:7", pullPolicy: null, platform: null },
+  ]);
+  docker.images.set(IMMICH_SERVER, { id: serverImageId, repoDigests: [], version: null, created: null });
+  docker.images.set("redis:7", { id: "sha256:redis", repoDigests: [], version: null, created: null });
+}
+
 test("a check drops the points that would restore the image already running", async () => {
   // Pull rows from before per-service points saved every running service, updated or not.
   const stack = await makeStack("immich");
-  docker.services.set(stack.dir, []);
+  immichServices(stack.dir);
   docker.containersByDir.set(stack.dir, [
     { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:new-server" },
     { service: "redis", state: "running", exitCode: 0, health: null, imageId: "sha256:redis" },
@@ -421,4 +434,87 @@ test("a check drops the points that would restore the image already running", as
   expect(status.serviceRollbacks).toEqual([{ service: "server", to: "v1.140", major: false }]);
   expect(store.points("immich").map((p) => p.service)).toEqual(["server"]);
   expect(docker.removeImageCalls).toEqual(["updater-rollback/immich-redis:latest"]);
+});
+
+test("a point is kept when the service tag already resolves to the new image", async () => {
+  // The pull succeeded, then `up` failed: the old image still runs, but rolling back must retag the service.
+  const stack = await makeStack("immich");
+  immichServices(stack.dir, "sha256:new-server");
+  docker.containersByDir.set(stack.dir, [
+    { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:old-server" },
+  ]);
+  docker.images.set("updater-rollback/immich-server:latest", {
+    id: "sha256:old-server",
+    repoDigests: [],
+    version: null,
+    created: null,
+  });
+  const store = moduleRef.get(RollbackStore);
+  store.savePoint({
+    stack: "immich",
+    service: "server",
+    image: IMMICH_SERVER,
+    to: "v1.140",
+    major: false,
+    running: true,
+  });
+  await detection.checkStack(stack, config());
+  expect(store.points("immich").map((p) => p.service)).toEqual(["server"]);
+  expect(docker.removeImageCalls).toEqual([]);
+});
+
+test("pruneAllPoints drops the points of unchanged services without a check", async () => {
+  const stack = await makeStack("immich");
+  immichServices(stack.dir);
+  docker.containersByDir.set(stack.dir, [
+    { service: "server", state: "running", exitCode: 0, health: null, imageId: "sha256:new-server" },
+    { service: "redis", state: "running", exitCode: 0, health: null, imageId: "sha256:redis" },
+  ]);
+  docker.images.set("updater-rollback/immich-server:latest", {
+    id: "sha256:old-server",
+    repoDigests: [],
+    version: null,
+    created: null,
+  });
+  docker.images.set("updater-rollback/immich-redis:latest", {
+    id: "sha256:redis",
+    repoDigests: [],
+    version: null,
+    created: null,
+  });
+  const store = moduleRef.get(RollbackStore);
+  const point = { stack: "immich", to: "v1.140", major: false, running: true };
+  store.savePoint({ ...point, service: "server", image: IMMICH_SERVER });
+  store.savePoint({ ...point, service: "redis", image: "redis:7" });
+  await detection.pruneAllPoints();
+  expect(store.points("immich").map((p) => p.service)).toEqual(["server"]);
+  expect(docker.removeImageCalls).toEqual(["updater-rollback/immich-redis:latest"]);
+  expect(moduleRef.get(JobStore).history(null).jobs).toEqual([]);
+});
+
+test("pruneAllPoints leaves the points alone while a job runs", async () => {
+  // An update may be saving a fresh point of that stack: only a check prunes while jobs run.
+  const stack = await makeStack("immich");
+  immichServices(stack.dir);
+  docker.containersByDir.set(stack.dir, [
+    { service: "redis", state: "running", exitCode: 0, health: null, imageId: "sha256:redis" },
+  ]);
+  docker.images.set("updater-rollback/immich-redis:latest", {
+    id: "sha256:redis",
+    repoDigests: [],
+    version: null,
+    created: null,
+  });
+  const store = moduleRef.get(RollbackStore);
+  store.savePoint({ stack: "immich", service: "redis", image: "redis:7", to: "7", major: false, running: true });
+  let release = () => {};
+  const jobs = moduleRef.get(JobRunner);
+  jobs.start(
+    { kind: "update", user: null, steps: [], targets: [{ stack: "immich", services: null }] },
+    () => new Promise((resolve) => (release = () => resolve("success"))),
+  );
+  await detection.pruneAllPoints();
+  expect(store.points("immich")).toHaveLength(1);
+  release();
+  await jobs.idle();
 });

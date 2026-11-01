@@ -4,13 +4,14 @@ import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from "re
 import { match } from "ts-pattern";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/updates-client";
-import { jobFinished, jobPanelLabel, mergeProgress, stepTitle } from "@/lib/updates-view";
+import { jobFinished, jobPanelLabel, mergeProgress, panelRollback, stepTitle } from "@/lib/updates-view";
 import {
   jobEventSchema,
   jobSchema,
   type ImageProgress,
   type JobStatus,
   type JobStep,
+  type PendingJob,
   type StackStatus,
 } from "@portail/shared/updater-api";
 
@@ -166,6 +167,7 @@ export function JobPanel({
   jobId,
   queued,
   stacks,
+  pendingJobs,
   onEnd,
   onRollback,
   onClose,
@@ -174,14 +176,16 @@ export function JobPanel({
   /** The stacks list last reported this job as queued. */
   queued: boolean;
   stacks: StackStatus[];
+  pendingJobs: PendingJob[];
   onEnd: () => void;
-  onRollback: (stack: StackStatus) => void;
+  /** `service` absent: the stack-level rollback. */
+  onRollback: (stack: StackStatus, service?: string) => void;
   onClose: () => void;
 }) {
   const log = useJobEvents(jobId, onEnd);
   const notStarted = log.steps.filter((s) => s.status === "not-started");
   const failed = log.steps.find((s) => s.status === "failed");
-  const rollback = log.status === "failed" && failed ? stacks.find((s) => s.name === failed.stack && s.rollback) : null;
+  const rollback = log.status === "failed" ? panelRollback(failed, stacks, pendingJobs) : null;
 
   return (
     <section aria-label={`Tâche ${jobId}`} className="mb-6 rounded-lg border bg-card p-4">
@@ -211,10 +215,27 @@ export function JobPanel({
         </ul>
       )}
       <JobLines log={log} />
-      {rollback?.rollback && (
-        <Button className="mt-3" variant="destructive" onClick={() => onRollback(rollback)}>
-          {rollback.serviceRollbacks.length > 0 ? "Tout remettre en arrière" : `Revenir à ${rollback.rollback.to}`}
-        </Button>
+      {rollback && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {rollback.points === null ? (
+            <Button variant="destructive" disabled={rollback.disabled} onClick={() => onRollback(rollback.stack)}>
+              {rollback.stack.serviceRollbacks.length > 0
+                ? "Tout remettre en arrière"
+                : `Revenir à ${rollback.stack.rollback?.to}`}
+            </Button>
+          ) : (
+            rollback.points.map((point) => (
+              <Button
+                key={point.service}
+                variant="destructive"
+                disabled={rollback.disabled}
+                onClick={() => onRollback(rollback.stack, point.service)}
+              >
+                Revenir à {point.to} ({point.service})
+              </Button>
+            ))
+          )}
+        </div>
       )}
     </section>
   );

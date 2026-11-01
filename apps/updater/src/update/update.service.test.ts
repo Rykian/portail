@@ -822,3 +822,14 @@ test("update-all and the stored status agree on a selectable stack with a major 
   expect(status.needsConfirm).toBe(true);
   await expect(service.updateAll(null)).rejects.toThrow(new BadRequestError("Aucune mise à jour à appliquer"));
 });
+
+test("a rollback of every point has no single from", async () => {
+  await immichStack();
+  await check();
+  const point = { stack: "immich", to: "1.0.0", major: false, running: true };
+  rollbacks.savePoint({ ...point, service: "server", image: SERVER });
+  rollbacks.savePoint({ ...point, service: "machine-learning", image: ML });
+  const job = await service.rollback("immich", {}, null);
+  expect(job.steps[0]).toMatchObject({ from: null, services: ["machine-learning", "server"] });
+  await jobs.idle();
+});

@@ -10,6 +10,7 @@ import {
   rollbackWarning,
   selectableServices,
   serviceRollbackWarning,
+  stackRollbackTitle,
   updateAllCount,
 } from "@/lib/updates-view";
 import {
@@ -130,11 +131,16 @@ export function UpdatesPage() {
         kind: "rollback",
         stack: stack.name,
         service: point.service,
-        to: point.to,
+        title: `Revenir à ${point.to} ?`,
         warning: serviceRollbackWarning(stack, point),
       });
     } else if (stack.rollback) {
-      setConfirmation({ kind: "rollback", stack: stack.name, to: stack.rollback.to, warning: rollbackWarning(stack) });
+      setConfirmation({
+        kind: "rollback",
+        stack: stack.name,
+        title: stackRollbackTitle(stack),
+        warning: rollbackWarning(stack),
+      });
     }
   }
 
@@ -192,6 +198,7 @@ export function UpdatesPage() {
           jobId={job}
           queued={pendingJobs.some((p) => p.id === job && p.status === "queued")}
           stacks={data.stacks}
+          pendingJobs={pendingJobs}
           onEnd={reload}
           onRollback={rollback}
           onClose={() => setJob(null)}

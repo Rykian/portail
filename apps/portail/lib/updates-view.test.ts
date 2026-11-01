@@ -12,6 +12,7 @@ import {
   jobPanelLabel,
   lockedServices,
   mergeProgress,
+  panelRollback,
   progressLabel,
   progressPercent,
   rollbackWarning,
@@ -20,8 +21,10 @@ import {
   serviceKindLabel,
   serviceRollbackWarning,
   stackJobState,
+  stackRollbackTitle,
   stackRow,
   stepTitle,
+  stepVersions,
   updateAllCount,
 } from "./updates-view";
 
@@ -286,4 +289,60 @@ test("the bar's percentage", () => {
   expect(progressPercent(progress({ downloaded: 0.4e9, total: 1.5e9 }))).toBe(27);
   expect(progressPercent(progress())).toBe(0);
   expect(progressPercent(progress({ state: "up-to-date" }))).toBe(100);
+});
+
+const immichPoints = stack({
+  name: "immich",
+  rollback: { to: "2 image(s)", major: false },
+  serviceRollbacks: [
+    { service: "machine-learning", to: "l'image précédente", major: false },
+    { service: "server", to: "v1.140", major: false },
+  ],
+});
+const failedStep = { stack: "immich", status: "failed" as const, from: null, to: null };
+
+test("the failed-job rollback targets the points of the failed step's services", () => {
+  expect(panelRollback({ ...failedStep, services: ["server"] }, [immichPoints], [])).toEqual({
+    stack: immichPoints,
+    points: [{ service: "server", to: "v1.140", major: false }],
+    disabled: false,
+  });
+});
+
+test("the failed-job rollback of a whole-stack step is the stack-level one", () => {
+  expect(panelRollback(failedStep, [immichPoints], [])).toEqual({ stack: immichPoints, points: null, disabled: false });
+});
+
+test("the failed-job rollback is disabled while the stack has a pending job", () => {
+  const pending: PendingJob[] = [
+    { id: 9, kind: "update", status: "queued", targets: [{ stack: "immich", services: null }] },
+  ];
+  expect(panelRollback({ ...failedStep, services: ["server"] }, [immichPoints], pending)?.disabled).toBe(true);
+});
+
+test("no failed-job rollback without a failed step, a rollback or a point of its services", () => {
+  expect(panelRollback(undefined, [immichPoints], [])).toBeNull();
+  expect(panelRollback(failedStep, [stack({ name: "immich" })], [])).toBeNull();
+  expect(panelRollback({ ...failedStep, services: ["redis"] }, [immichPoints], [])).toBeNull();
+});
+
+test("step versions show the services of a selection", () => {
+  expect(
+    stepVersions([
+      {
+        stack: "immich",
+        status: "success",
+        services: ["server", "machine-learning"],
+        from: null,
+        to: "server, machine-learning",
+      },
+      { stack: "mealie", status: "success", from: "v1", to: "v2" },
+      { stack: "idle", status: "success", from: null, to: null },
+    ]),
+  ).toBe("immich (server, machine-learning), v1 → v2");
+});
+
+test("the title of a stack rollback", () => {
+  expect(stackRollbackTitle(immichPoints)).toBe("Revenir aux images précédentes ?");
+  expect(stackRollbackTitle(stack({ rollback: { to: "v3.4.0", major: false } }))).toBe("Revenir à v3.4.0 ?");
 });

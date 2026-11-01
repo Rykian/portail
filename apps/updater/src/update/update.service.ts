@@ -112,7 +112,12 @@ export class UpdateService {
     const step: JobStep = {
       stack: name,
       status: "pending",
-      from: service === null ? status.current : (status.services.find((s) => s.name === service)?.current ?? null),
+      // Several points restore several versions: no single "from" (a stack-level row restores the stack's version).
+      from: saved
+        ? status.current
+        : service === null
+          ? null
+          : (status.services.find((s) => s.name === service)?.current ?? null),
       to: saved?.to ?? points.map((p) => p.to).join(", "),
       ...(saved ? {} : { services: points.map((p) => p.service) }),
     };

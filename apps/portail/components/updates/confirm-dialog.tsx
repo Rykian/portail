@@ -13,7 +13,7 @@ import type { NeedsConfirmResponse } from "@portail/shared/updater-api";
 
 export type Confirmation =
   | { kind: "update"; stack: string; services?: string[]; details: NeedsConfirmResponse["needsConfirm"] }
-  | { kind: "rollback"; stack: string; service?: string; to: string; warning: string | null };
+  | { kind: "rollback"; stack: string; service?: string; title: string; warning: string | null };
 
 export function ConfirmDialog({
   confirmation,
@@ -46,7 +46,7 @@ export function ConfirmDialog({
             </>
           ) : (
             <>
-              <DialogTitle>Revenir à {confirmation.to} ?</DialogTitle>
+              <DialogTitle>{confirmation.title}</DialogTitle>
               <DialogDescription>
                 {confirmation.service
                   ? `${confirmation.service} de ${confirmation.stack} reprendra son image précédente.`

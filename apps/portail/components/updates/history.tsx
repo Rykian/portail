@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/updates-client";
-import { statusLabel, stepTitle } from "@/lib/updates-view";
+import { statusLabel, stepTitle, stepVersions } from "@/lib/updates-view";
 import { historyPageSchema, type Job, type JobKind } from "@portail/shared/updater-api";
 import { JobLines, useJobEvents } from "./job-panel";
 
@@ -19,13 +19,6 @@ function kindLabel(kind: JobKind): string {
     .with("rollback", () => "retour arrière")
     .with("update-all", () => "tout mettre à jour")
     .exhaustive();
-}
-
-function versions(job: Job): string {
-  return job.steps
-    .filter((step) => step.from || step.to)
-    .map((step) => `${step.from ?? "?"} → ${step.to ?? "?"}`)
-    .join(", ");
 }
 
 function JobLogDialog({ job, onClose }: { job: Job; onClose: () => void }) {
@@ -102,7 +95,7 @@ export function History() {
                 <TableCell className="whitespace-normal">
                   {job.steps.length > 0 ? job.steps.map(stepTitle).join(", ") : kindLabel(job.kind)}
                 </TableCell>
-                <TableCell className="whitespace-normal">{versions(job)}</TableCell>
+                <TableCell className="whitespace-normal">{stepVersions(job.steps)}</TableCell>
                 <TableCell>{statusLabel(job.status)}</TableCell>
               </TableRow>
             ))}

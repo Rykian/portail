@@ -161,3 +161,33 @@ export function jobPanelLabel(
   const started = log.lines.length > 0 || log.steps.some((s) => s.status !== "pending" && s.status !== "not-started");
   return queued && !started ? "en attente" : "en cours";
 }
+
+/**
+ * What the panel of a failed job offers to roll back: the points of the failed step's services, else (whole-stack step)
+ * the stack-level rollback. Disabled while a job is pending on the stack: the updater would refuse it.
+ */
+export function panelRollback(
+  failed: JobStep | undefined,
+  stacks: StackStatus[],
+  pending: PendingJob[],
+): { stack: StackStatus; points: ServiceRollback[] | null; disabled: boolean } | null {
+  const stack = failed && stacks.find((s) => s.name === failed.stack && s.rollback);
+  if (!failed || !stack) return null;
+  const disabled = stackJobState(stack.name, pending) !== null;
+  if (!failed.services) return { stack, points: null, disabled };
+  const points = stack.serviceRollbacks.filter((p) => failed.services!.includes(p.service));
+  return points.length > 0 ? { stack, points, disabled } : null;
+}
+
+/** The history's summary of a job: each step's versions, or the services of a selection. */
+export function stepVersions(steps: JobStep[]): string {
+  return steps
+    .filter((step) => step.services || step.from || step.to)
+    .map((step) => (step.services ? stepTitle(step) : `${step.from ?? "?"} → ${step.to ?? "?"}`))
+    .join(", ");
+}
+
+/** Rolling back a whole stack: its version, or (per-image points only) its previous images. */
+export function stackRollbackTitle(stack: StackStatus): string {
+  return stack.serviceRollbacks.length > 0 ? "Revenir aux images précédentes ?" : `Revenir à ${stack.rollback?.to} ?`;
+}
